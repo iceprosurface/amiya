@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "start": "tsx watch --exclude \"./logs/**/*\" --exclude \"./.amiya/**/*\" src/index.ts",
+    "dev": "tsx watch --exclude \"./logs/**/*\" --exclude \"./.amiya/**/*\" src/index.ts",
+    "start": "pm2 start ./.amiya/pm2.config.cjs",
     "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
@@ -23,6 +24,7 @@
     "@opencode-ai/plugin": "latest",
     "@opencode-ai/sdk": "^1.1.39",
     "better-sqlite3": "^11.8.1",
+    "pm2": "^6.0.14",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5",

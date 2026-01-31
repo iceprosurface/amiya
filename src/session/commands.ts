@@ -1,4 +1,6 @@
 import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import type { IncomingMessage } from "../types.js";
 import type { SessionHandlerOptions } from "./session-handler.js";
 import {
@@ -43,6 +45,35 @@ export function parseBooleanArg(input: string | undefined): boolean | null {
   if (["true", "yes", "y", "on", "1"].includes(normalized)) return true;
   if (["false", "no", "n", "off", "0"].includes(normalized)) return false;
   return null;
+}
+
+function expandUserPath(input: string): string {
+  if (!input.startsWith("~/")) return input;
+  const home = process.env.HOME || "";
+  return home ? path.join(home, input.slice(2)) : input;
+}
+
+function resolveAccessibleDirectory(
+  channelId: string,
+  projectDirectory: string,
+  logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void,
+): string {
+  const channelDirectory = getChannelDirectory(channelId);
+  if (!channelDirectory) return projectDirectory;
+
+  try {
+    fs.accessSync(channelDirectory, fs.constants.R_OK | fs.constants.X_OK);
+    return channelDirectory;
+  } catch {
+    if (logger) {
+      logger(
+        `Channel directory not accessible: ${channelDirectory}. Falling back to ${projectDirectory}.`,
+        "warn",
+      );
+    }
+    setChannelDirectory(channelId, projectDirectory);
+    return projectDirectory;
+  }
 }
 
 export function isBotMentioned(message: IncomingMessage, botUserId?: string): boolean {
@@ -108,8 +139,11 @@ export async function handleCommand(
         return true;
       }
       active.controller.abort(new Error("abort"));
-      const directory =
-        getChannelDirectory(message.channelId) || options.projectDirectory;
+      const directory = resolveAccessibleDirectory(
+        message.channelId,
+        options.projectDirectory,
+        options.logger,
+      );
       const getClient = await initializeOpencodeForDirectory(
         directory,
         options.opencodeConfig,
@@ -159,8 +193,11 @@ export async function handleCommand(
       return true;
     }
     case "context": {
-      const directory =
-        getChannelDirectory(message.channelId) || options.projectDirectory;
+      const directory = resolveAccessibleDirectory(
+        message.channelId,
+        options.projectDirectory,
+        options.logger,
+      );
 
       const getClient = await initializeOpencodeForDirectory(
         directory,
@@ -281,6 +318,52 @@ export async function handleCommand(
       }
 
       await sendReply(provider, message, lines.join("\n"));
+      return true;
+    }
+    case "project":
+    case "dir": {
+      const rawArg = command.args.join(" ").trim();
+      if (!rawArg) {
+        const directory = resolveAccessibleDirectory(
+          message.channelId,
+          options.projectDirectory,
+          options.logger,
+        );
+        await sendReply(
+          provider,
+          message,
+          `当前项目目录：\n\n\`${directory}\`\n\n提示：该设置仅对当前频道生效。`,
+        );
+        return true;
+      }
+
+      const expanded = expandUserPath(rawArg);
+      const targetPath = path.isAbsolute(expanded)
+        ? expanded
+        : path.resolve(options.projectDirectory, expanded);
+
+      try {
+        const stat = fs.statSync(targetPath);
+        if (!stat.isDirectory()) {
+          await sendReply(provider, message, `✗ 目标不是目录：\`${targetPath}\``);
+          return true;
+        }
+        fs.accessSync(targetPath, fs.constants.R_OK | fs.constants.X_OK);
+      } catch (error) {
+        await sendReply(
+          provider,
+          message,
+          `✗ 目录不可访问或不存在：\`${targetPath}\`\n\n请确认路径或权限。`,
+        );
+        return true;
+      }
+
+      setChannelDirectory(message.channelId, targetPath);
+      await sendReply(
+        provider,
+        message,
+        `✅ 已设置当前频道目录：\n\n\`${targetPath}\``,
+      );
       return true;
     }
     case "list-sessions": {
@@ -441,11 +524,33 @@ export async function handleCommand(
       return true;
     }
     case "help": {
-      await sendReply(
-        provider,
-        message,
-        "命令：/new-session 新建会话，/resume <会话ID> 恢复会话，/abort 中止请求，/queue 查看队列详情，/context [会话ID] 查看上下文占用，/list-sessions 列出会话，/model [提供商/模型|清除] 设置模型，/agent [名称] 设置代理，/mention-required <true|false> 线程是否必须@机器人，/update 更新代码，/compact 压缩会话",
-      );
+      const lines = [
+        "**命令帮助**",
+        "",
+        "**会话**",
+        "- `/new-session` 新建会话",
+        "- `/resume <会话ID>` 绑定会话",
+        "- `/abort` 中止当前请求",
+        "- `/queue` 查看队列",
+        "- `/context [会话ID]` 查看上下文占用",
+        "- `/list-sessions` 列出会话",
+        "",
+        "**模型与代理**",
+        "- `/model <提供商/模型|clear>` 设置/清除模型",
+        "- `/agent <名称>` 设置 agent",
+        "",
+        "**项目目录**",
+        "- `/project` 查看当前目录",
+        "- `/project <path>` 设置当前频道目录",
+        "- `/dir` 等同 `/project`",
+        "",
+        "**运行**",
+        "- `/mention-required <true|false>` 线程是否必须@机器人",
+        "- `/update` 或 `/deploy` 更新代码并重启",
+        "- `/compact` 压缩会话（占位）",
+        "- `/help` 查看帮助",
+      ];
+      await sendReply(provider, message, lines.join("\n"));
       return true;
     }
     default:

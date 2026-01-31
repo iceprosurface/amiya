@@ -5,10 +5,12 @@ import { handleCardAction, handleUserNotWhitelisted } from "./approval.js";
 import { parseCommand, handleCommand, isBotMentioned } from "./commands.js";
 import { flushQueue } from "./queue.js";
 import { sendPrompt } from "./opencode.js";
-import { activeRequests, messageQueue } from "./state.js";
+import { activeRequests, messageQueue, pendingQuestions } from "./state.js";
+import type { PendingQuestion } from "./state.js";
 import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
 import { sendReply } from "./messaging.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
+import { getOpencodeClientV2 } from "../opencode.js";
 
 export type SessionHandlerOptions = {
   provider: MessageProvider;
@@ -53,6 +55,12 @@ export type SessionHandlerOptions = {
   questionResponse?: {
     questionId: string;
     answerLabel: string;
+    questionIndex?: number;
+  };
+  questionNav?: {
+    questionId: string;
+    questionIndex?: number;
+    direction: "next" | "prev";
   };
   botUserId?: string;
 };
@@ -71,9 +79,119 @@ export async function handleIncomingMessage(
     return;
   }
 
-  const isQuestionResponse = Boolean(options.questionResponse);
-  if (options.questionResponse) {
-    message.text = options.questionResponse.answerLabel;
+  const updateQuestionCard = async (pending: PendingQuestion, messageId: string, completed = false) => {
+    const feishuClient = options.provider.getFeishuClient?.();
+    if (!feishuClient || typeof feishuClient.updateQuestionCardWithId !== "function") {
+      logWith(options.logger, "Question card update skipped: provider has no card updater", "debug");
+      return;
+    }
+    const current = pending.questions[pending.currentIndex];
+    if (!current) return;
+    const total = pending.questions.length;
+    const selected = pending.answers[pending.currentIndex] || [];
+    const canSubmit = pending.answeredIndices.size >= total;
+    const nextLabel = pending.currentIndex + 1 >= total
+      ? (canSubmit ? "提交" : "未完成")
+      : "下一步";
+    await feishuClient.updateQuestionCardWithId(messageId, {
+      title: current.header || "请选择",
+      questionId: pending.requestId,
+      questionText: current.question,
+      options: current.options,
+      questionIndex: pending.currentIndex,
+      totalQuestions: total,
+      selectedLabels: selected,
+      nextLabel,
+      completed,
+    });
+  };
+
+  const isQuestionResponse = Boolean(options.questionResponse || options.questionNav);
+  if (options.questionResponse || options.questionNav) {
+    const questionId = options.questionResponse?.questionId || options.questionNav?.questionId;
+    const pending = questionId ? pendingQuestions.get(questionId) : undefined;
+    if (!pending) {
+      logWith(options.logger, `Question action ignored: missing pending request ${questionId}`, "warn");
+      return;
+    }
+
+    const cardMessageId = pending.cardMessageId || message.messageId;
+    if (!pending.cardMessageId && message.messageId) {
+      pending.cardMessageId = message.messageId;
+    }
+
+    const total = pending.questions.length;
+
+    let submitNow = false;
+
+    if (options.questionResponse) {
+      const { answerLabel, questionIndex } = options.questionResponse;
+      const resolvedIndex =
+        typeof questionIndex === "number" && !Number.isNaN(questionIndex)
+          ? questionIndex
+          : pending.currentIndex;
+      if (resolvedIndex < 0 || resolvedIndex >= total) {
+        logWith(options.logger, `Question response ignored: invalid index for ${questionId}`, "warn");
+        return;
+      }
+
+      pending.answers[resolvedIndex] = [answerLabel];
+      pending.answeredIndices.add(resolvedIndex);
+
+      if (total === 1) {
+        submitNow = true;
+      }
+      pending.currentIndex = Math.min(resolvedIndex + 1, total - 1);
+    }
+
+    if (options.questionNav) {
+      const { direction, questionIndex } = options.questionNav;
+      const resolvedIndex =
+        typeof questionIndex === "number" && !Number.isNaN(questionIndex)
+          ? questionIndex
+          : pending.currentIndex;
+      if (direction === "prev") {
+        pending.currentIndex = Math.max(0, resolvedIndex - 1);
+      } else if (direction === "next") {
+        if (resolvedIndex + 1 < total) {
+          pending.currentIndex = resolvedIndex + 1;
+        } else {
+          pending.currentIndex = resolvedIndex;
+          submitNow = true;
+        }
+      }
+    }
+
+    const completed = pending.answeredIndices.size >= total && submitNow;
+    if (completed) {
+      const clientV2 = getOpencodeClientV2(pending.directory);
+      if (!clientV2) {
+        logWith(options.logger, `Question reply failed: no OpenCode client for ${pending.directory}`, "error");
+        return;
+      }
+      const answers = pending.questions.map((_, idx) => pending.answers[idx] || []);
+      try {
+        await clientV2.question.reply({
+          requestID: pending.requestId,
+          answers,
+        });
+        pendingQuestions.delete(questionId!);
+        await updateQuestionCard(pending, cardMessageId, true);
+        logWith(options.logger, `Question reply submitted ${questionId}`, "info");
+      } catch (error) {
+        const described = describeError(error);
+        logWith(options.logger, `Question reply failed ${questionId}: ${described.summary}`, "error");
+      }
+      return;
+    }
+
+    await updateQuestionCard(pending, cardMessageId, false);
+    logWith(
+      options.logger,
+      `Question action handled ${questionId}: ${pending.answeredIndices.size}/${total} current=${pending.currentIndex + 1}`,
+      "debug",
+    );
+    return;
   }
 
   const command = parseCommand(message.text);

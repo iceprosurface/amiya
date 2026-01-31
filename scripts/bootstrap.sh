@@ -238,39 +238,6 @@ EOF
   fi
 }
 
-generate_pm2_files() {
-  local data_dir="$TARGET_DIR/.amiya"
-  local bootstrap_path="$data_dir/bootstrap.sh"
-  local config_path="$data_dir/pm2.config.cjs"
-  local dist_entry="$ROOT_DIR/dist/index.js"
-
-  cat > "$bootstrap_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$ROOT_DIR"
-node "$dist_entry" "$TARGET_DIR"
-EOF
-  chmod +x "$bootstrap_path"
-
-  cat > "$config_path" <<EOF
-module.exports = {
-  apps: [
-    {
-      name: "amiya",
-      script: "$bootstrap_path",
-      cwd: "$ROOT_DIR",
-      instances: 1,
-      autorestart: true,
-      watch: false,
-      env: {
-        NODE_ENV: "production",
-      },
-    },
-  ],
-};
-EOF
-}
-
 start_pm2() {
   print "Installing dependencies..."
   local install_flags=()
@@ -283,7 +250,7 @@ start_pm2() {
   print "Building..."
   pnpm run build
   print "Starting PM2..."
-  pm2 start "$TARGET_DIR/.amiya/pm2.config.cjs"
+  AMIYA_TARGET_DIR="$TARGET_DIR" pm2 start "$ROOT_DIR/pm2.config.cjs"
   pm2 save
 }
 
@@ -295,7 +262,6 @@ main() {
   ensure_opencode
   opencode_login
   generate_config
-  generate_pm2_files
   start_pm2
   print "Bootstrap complete."
 }

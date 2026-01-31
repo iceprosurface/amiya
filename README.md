@@ -8,7 +8,7 @@
 - ✅ Thread -> Session 绑定与持久化
 - ✅ 任务队列与中断（abort）
 - ✅ 会话级 model/agent 偏好
-- ✅ 命令路由：/new-session /resume /abort /queue /list-sessions /model /agent /compact /help
+- ✅ 命令路由：/new-session /resume /abort /queue /list-sessions /model /agent /project /compact /help
 - ✅ Lark 国际版支持（useLark）
 
 > Slack 目前只有骨架，暂不可用。
@@ -141,6 +141,7 @@ pm2 logs amiya
 - `/list-sessions` 列出会话
 - `/model <name>` 设置当前 session 模型
 - `/agent <name>` 设置当前 session agent
+- `/project <path>` 设置当前频道的项目目录
 - `/mention-required <true|false>` 设置当前 thread 是否必须 @ 机器人
 - `/compact` 压缩当前会话（占位）
 - `/update` / `/deploy` 更新代码（git pull + 可选 pnpm install + pm2 重启）

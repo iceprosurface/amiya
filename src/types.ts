@@ -31,7 +31,8 @@ export interface MessageProvider {
       extra?: {
         isCardAction: boolean
         cardActionData?: { action: 'approve' | 'reject'; requestId: string }
-        questionResponse?: { questionId: string; answerLabel: string }
+        questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
+        questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
       },
     ) => void | Promise<void>,
   ): void

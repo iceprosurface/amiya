@@ -108,7 +108,8 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     extra?: {
       isCardAction: boolean
       cardActionData?: { action: 'approve' | 'reject'; requestId: string }
-      questionResponse?: { questionId: string; answerLabel: string }
+      questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
+      questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
     },
   ) => void | Promise<void>) | null = null
 
@@ -159,6 +160,25 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
         questionResponse: {
           questionId: cardAction.questionId,
           answerLabel: cardAction.answerLabel,
+          questionIndex: cardAction.questionIndex,
+        },
+      })).catch((error) => {
+        log(`Card action handler failed: ${error}`, 'error')
+      })
+      return
+    }
+
+    if (cardAction.action === 'question-nav') {
+      if (!cardAction.questionId || !cardAction.direction) {
+        log(`Question nav action missing data: ${JSON.stringify(cardAction)}`, 'warn')
+        return
+      }
+      void Promise.resolve(messageHandler(incomingMessage, {
+        isCardAction: true,
+        questionNav: {
+          questionId: cardAction.questionId,
+          questionIndex: cardAction.questionIndex,
+          direction: cardAction.direction,
         },
       })).catch((error) => {
         log(`Card action handler failed: ${error}`, 'error')
@@ -192,7 +212,7 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     extra?: {
       isCardAction: boolean
       cardActionData?: { action: 'approve' | 'reject'; requestId: string }
-      questionResponse?: { questionId: string; answerLabel: string }
+      questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
     },
   ) => void | Promise<void>): void {
     messageHandler = handler

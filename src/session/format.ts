@@ -70,14 +70,19 @@ export function extractTextFromPromptResult(result: unknown): string {
       if (!state) continue;
       const status = typeof state.status === "string" ? state.status : "unknown";
 
+      const formatToolBlock = (label: string, body?: string): string => {
+        if (body && body.trim().length > 0) {
+          return `> ${label}\n\n\`\`\`\n${body}\n\`\`\``;
+        }
+        return `> ${label}`;
+      };
+
       if (status === "completed") {
         const output = typeof state.output === "string" ? state.output : "";
-        if (output) {
-          toolOutputs.push(`[#${toolName}] ${output}`);
-        }
+        toolOutputs.push(formatToolBlock(`[#${toolName}]`, output));
       } else if (status === "error") {
         const error = typeof state.error === "string" ? state.error : "unknown";
-        toolOutputs.push(`[#${toolName}] ❌ ${error}`);
+        toolOutputs.push(formatToolBlock(`[#${toolName}] ❌`, error));
       } else if (status === "running" || status === "pending") {
         const input = isRecord(state.input) ? JSON.stringify(state.input) : "";
         const title =
@@ -85,11 +90,7 @@ export function extractTextFromPromptResult(result: unknown): string {
             ? state.title
             : "";
         const header = title ? `${title} (${status})` : status;
-        if (input) {
-          toolOutputs.push(`[#${toolName}] ${header}\n${input}`);
-        } else {
-          toolOutputs.push(`[#${toolName}] ${header}`);
-        }
+        toolOutputs.push(formatToolBlock(`[#${toolName}] ${header}`, input));
       }
       continue;
     }

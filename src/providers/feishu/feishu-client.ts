@@ -101,10 +101,85 @@ export function createFeishuClient(
     questionId: string
     questionText: string
     options: Array<{ label: string; description?: string }>
+    questionIndex: number
+    totalQuestions: number
+    selectedLabels?: string[]
+    nextLabel?: string
+    completed?: boolean
   }) => {
     const optionText = params.options
       .map((opt) => (opt.description ? `- **${opt.label}**：${opt.description}` : `- **${opt.label}**`))
       .join('\n')
+    const progressText = params.totalQuestions > 0
+      ? `\n\n_第 ${params.questionIndex + 1}/${params.totalQuestions} 题_`
+      : ''
+    const selectedText = params.selectedLabels && params.selectedLabels.length > 0
+      ? `\n\n**已选**：${params.selectedLabels.join('，')}`
+      : ''
+
+    if (params.completed) {
+      return {
+        config: {
+          wide_screen_mode: true,
+        },
+        header: {
+          template: 'green',
+          title: {
+            content: params.title || '已提交',
+            tag: 'plain_text',
+          },
+        },
+        elements: [
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `✅ 已提交问题回答${progressText}`,
+            },
+          },
+        ],
+      }
+    }
+
+    const actions = params.options.map((opt) => ({
+      tag: 'button',
+      text: {
+        tag: 'plain_text',
+        content: opt.label,
+      },
+      value: {
+        action: 'question',
+        question_id: params.questionId,
+        answer_label: opt.label,
+        question_index: params.questionIndex,
+      },
+    }))
+
+    const navActions = [
+      params.questionIndex > 0
+        ? {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '上一步' },
+            value: {
+              action: 'question-nav',
+              question_id: params.questionId,
+              question_index: params.questionIndex,
+              direction: 'prev',
+            },
+          }
+        : null,
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: params.nextLabel || '下一步' },
+        type: params.questionIndex + 1 >= params.totalQuestions ? 'primary' : 'default',
+        value: {
+          action: 'question-nav',
+          question_id: params.questionId,
+          question_index: params.questionIndex,
+          direction: 'next',
+        },
+      },
+    ].filter(Boolean)
 
     return {
       config: {
@@ -122,23 +197,16 @@ export function createFeishuClient(
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**${params.questionText}**\n${optionText}`,
+            content: `**${params.questionText}**${selectedText}\n${optionText}${progressText}`,
           },
         },
         {
           tag: 'action',
-          actions: params.options.map((opt) => ({
-            tag: 'button',
-            text: {
-              tag: 'plain_text',
-              content: opt.label,
-            },
-            value: {
-              action: 'question',
-              question_id: params.questionId,
-              answer_label: opt.label,
-            },
-          })),
+          actions,
+        },
+        {
+          tag: 'action',
+          actions: navActions,
         },
       ],
     }
@@ -423,6 +491,10 @@ export function createFeishuClient(
         questionId: string
         questionText: string
         options: Array<{ label: string; description?: string }>
+        questionIndex: number
+        totalQuestions: number
+        selectedLabels?: string[]
+        nextLabel?: string
       },
       options?: { replyInThread?: boolean },
     ): Promise<string | null> {
@@ -453,6 +525,36 @@ export function createFeishuClient(
       } catch (error) {
         log(`Reply question card failed: ${error}`, 'error')
         return null
+      }
+    },
+
+    async updateQuestionCardWithId(
+      messageId: string,
+      params: {
+        title: string
+        questionId: string
+        questionText: string
+        options: Array<{ label: string; description?: string }>
+        questionIndex: number
+        totalQuestions: number
+        selectedLabels?: string[]
+        nextLabel?: string
+        completed?: boolean
+      },
+    ): Promise<boolean> {
+      try {
+        const cardContent = buildQuestionCardContent(params)
+        await client.im.message.update({
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        })
+        return true
+      } catch (error) {
+        log(`Update question card failed: ${error}`, 'error')
+        return false
       }
     },
 

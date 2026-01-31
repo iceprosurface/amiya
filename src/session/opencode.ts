@@ -1,4 +1,5 @@
 import type { Config, OpencodeClient } from "@opencode-ai/sdk";
+import fs from "node:fs";
 import type { IncomingMessage, MessageProvider } from "../types.js";
 import {
   getChannelAgent,
@@ -14,7 +15,7 @@ import { initializeOpencodeForDirectory } from "../opencode.js";
 import { getOpencodeSystemMessage } from "../system-message.js";
 import { OpenCodeApiError } from "../errors.js";
 import { sendReply } from "./messaging.js";
-import { activeRequests, activeStreams } from "./state.js";
+import { activeRequests, activeStreams, pendingQuestions } from "./state.js";
 import { extractPartsFromPromptResult, extractTextFromPromptResult } from "./format.js";
 import { buildFooter } from "./stats.js";
 import { buildFailureReport, describeError, isRecord, logWith, toUserErrorMessage } from "./utils.js";
@@ -29,6 +30,28 @@ export function parseModelString(
   const modelID = modelParts.join("/");
   if (!providerID || !modelID) return null;
   return { providerID, modelID };
+}
+
+function resolveAccessibleDirectory(
+  channelId: string,
+  projectDirectory: string,
+  logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void,
+): string {
+  const channelDirectory = getChannelDirectory(channelId);
+  if (!channelDirectory) return projectDirectory;
+
+  try {
+    fs.accessSync(channelDirectory, fs.constants.R_OK | fs.constants.X_OK);
+    return channelDirectory;
+  } catch {
+    logWith(
+      logger,
+      `Channel directory not accessible: ${channelDirectory}. Falling back to ${projectDirectory}.`,
+      "warn",
+    );
+    setChannelDirectory(channelId, projectDirectory);
+    return projectDirectory;
+  }
 }
 
 export async function resolveDefaultModel(
@@ -73,10 +96,24 @@ export async function resolveDefaultModel(
 }
 
 type QuestionSpec = {
-  id: string;
+  requestId: string;
+  questionIndex: number;
   title: string;
   question: string;
   options: Array<{ label: string; description?: string }>;
+  multiple?: boolean;
+};
+
+type QuestionInput = {
+  question: string;
+  header: string;
+  options: Array<{ label: string; description?: string }>;
+  multiple?: boolean;
+};
+
+type QuestionRequestSpec = {
+  requestId: string;
+  questions: QuestionInput[];
 };
 
 function extractQuestionSpecs(result: unknown): QuestionSpec[] {
@@ -84,7 +121,54 @@ function extractQuestionSpecs(result: unknown): QuestionSpec[] {
   if (parts.length === 0) return [];
 
   const specs: QuestionSpec[] = [];
-  let questionIndex = 0;
+  let fallbackRequestIndex = 0;
+
+  const normalizeQuestions = (value: unknown): Array<Record<string, unknown>> => {
+    if (Array.isArray(value)) {
+      return value.filter((item) => isRecord(item)) as Array<Record<string, unknown>>;
+    }
+    if (isRecord(value) && Array.isArray(value.questions)) {
+      return value.questions.filter((item) => isRecord(item)) as Array<Record<string, unknown>>;
+    }
+    if (isRecord(value) && isRecord(value.input)) {
+      const nested = value.input as Record<string, unknown>;
+      if (Array.isArray(nested.questions)) {
+        return nested.questions.filter((item) => isRecord(item)) as Array<Record<string, unknown>>;
+      }
+      if (typeof nested.question === "string") {
+        return [nested];
+      }
+    }
+    if (isRecord(value) && isRecord(value.data)) {
+      const nested = value.data as Record<string, unknown>;
+      if (Array.isArray(nested.questions)) {
+        return nested.questions.filter((item) => isRecord(item)) as Array<Record<string, unknown>>;
+      }
+      if (typeof nested.question === "string") {
+        return [nested];
+      }
+    }
+    if (isRecord(value) && isRecord(value.question)) {
+      return [value.question as Record<string, unknown>];
+    }
+    if (isRecord(value) && typeof value.question === "string") {
+      return [value as Record<string, unknown>];
+    }
+    return [];
+  };
+
+  const normalizeOptions = (optionsRaw: unknown[]): Array<{ label: string; description?: string }> => {
+    return optionsRaw
+      .map((opt) => {
+        if (typeof opt === "string") return { label: opt };
+        if (!isRecord(opt)) return null;
+        const label = typeof opt.label === "string" ? opt.label : "";
+        if (!label) return null;
+        const description = typeof opt.description === "string" ? opt.description : undefined;
+        return description ? { label, description } : { label };
+      })
+      .filter((opt): opt is { label: string; description?: string } => Boolean(opt));
+  };
 
   for (const part of parts) {
     if (!isRecord(part)) continue;
@@ -107,34 +191,133 @@ function extractQuestionSpecs(result: unknown): QuestionSpec[] {
         parsed = undefined;
       }
     }
-    if (!isRecord(parsed)) continue;
-    const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+    if (!isRecord(parsed) && !Array.isArray(parsed)) continue;
+    const questions = normalizeQuestions(parsed);
+    const parsedRecord = isRecord(parsed) ? parsed : undefined;
+    let requestId =
+      (parsedRecord && typeof parsedRecord.requestId === "string" && parsedRecord.requestId)
+      || (parsedRecord && typeof parsedRecord.request_id === "string" && parsedRecord.request_id)
+      || (parsedRecord && typeof parsedRecord.id === "string" && parsedRecord.id)
+      || "";
+    if (!requestId) {
+      requestId = `q${fallbackRequestIndex++}`;
+    }
+    let localIndex = 0;
     for (const q of questions) {
-      if (!isRecord(q)) continue;
       const question = typeof q.question === "string" ? q.question : "";
       const header = typeof q.header === "string" ? q.header : "";
       const optionsRaw = Array.isArray(q.options) ? q.options : [];
-      const options = optionsRaw
-        .map((opt) => {
-          if (!isRecord(opt)) return null;
-          const label = typeof opt.label === "string" ? opt.label : "";
-          if (!label) return null;
-          const description = typeof opt.description === "string" ? opt.description : undefined;
-          return description ? { label, description } : { label };
-        })
-        .filter((opt): opt is { label: string; description?: string } => Boolean(opt));
+      const options = normalizeOptions(optionsRaw);
       if (!question || options.length === 0) continue;
-      const id = `q${questionIndex++}`;
+      const multiple = typeof q.multiple === "boolean" ? q.multiple : undefined;
       specs.push({
-        id,
+        requestId,
+        questionIndex: localIndex,
         title: header || "请选择",
         question,
         options,
+        multiple,
       });
+      localIndex += 1;
     }
   }
 
   return specs;
+}
+
+function normalizeQuestionInputs(raw: unknown): QuestionRequestSpec | null {
+  if (!isRecord(raw)) return null;
+  const requestId = typeof raw.id === "string" ? raw.id : "";
+  if (!requestId) return null;
+  const questionsRaw = Array.isArray(raw.questions) ? raw.questions : [];
+  const questions: QuestionInput[] = [];
+  for (const entry of questionsRaw) {
+    if (!isRecord(entry)) continue;
+    const question = typeof entry.question === "string" ? entry.question : "";
+    if (!question) continue;
+    const header = typeof entry.header === "string" ? entry.header : "";
+    const optionsRaw = Array.isArray(entry.options) ? entry.options : [];
+    const options = optionsRaw
+      .map((opt) => {
+        if (typeof opt === "string") return { label: opt };
+        if (!isRecord(opt)) return null;
+        const label = typeof opt.label === "string" ? opt.label : "";
+        if (!label) return null;
+        const description = typeof opt.description === "string" ? opt.description : undefined;
+        return description ? { label, description } : { label };
+      })
+      .filter((opt): opt is { label: string; description?: string } => Boolean(opt));
+    if (options.length === 0) continue;
+    const multiple = typeof entry.multiple === "boolean" ? entry.multiple : undefined;
+    questions.push({
+      question,
+      header: header || "请选择",
+      options,
+      multiple,
+    });
+  }
+  if (questions.length === 0) return null;
+  return { requestId, questions };
+}
+
+function registerPendingQuestion(
+  request: QuestionRequestSpec,
+  options: { sessionId: string; directory: string; logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void },
+) {
+  if (pendingQuestions.has(request.requestId)) {
+    logWith(options.logger, `Question request already pending id=${request.requestId}`, "debug");
+  }
+  pendingQuestions.set(request.requestId, {
+    requestId: request.requestId,
+    sessionId: options.sessionId,
+    directory: options.directory,
+    currentIndex: 0,
+    questions: request.questions,
+    answers: {},
+    answeredIndices: new Set<number>(),
+  });
+}
+
+async function sendQuestionCardsFromRequest(
+  request: QuestionRequestSpec,
+  options: {
+    provider: MessageProvider;
+    message: IncomingMessage;
+    logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void;
+  },
+): Promise<string | null> {
+  const feishuClient = options.provider.getFeishuClient?.();
+  if (!feishuClient || typeof feishuClient.replyQuestionCardWithId !== "function") {
+    logWith(options.logger, "Question card skipped: provider has no card sender", "debug");
+    return null;
+  }
+
+  const replyInThread = Boolean(options.message.threadId);
+  const question = request.questions[0];
+  if (!question) return null;
+  logWith(
+    options.logger,
+    `Sending question card id=${request.requestId} index=0 options=${question.options.length}`,
+    "debug",
+  );
+  const messageId = await feishuClient.replyQuestionCardWithId(
+    options.message.messageId,
+    {
+      title: question.header || "请选择",
+      questionId: request.requestId,
+      questionText: question.question,
+      options: question.options,
+      questionIndex: 0,
+      totalQuestions: request.questions.length,
+      selectedLabels: [],
+      nextLabel: request.questions.length <= 1 ? "提交" : "下一步",
+    },
+    { replyInThread },
+  );
+  if (!messageId) {
+    logWith(options.logger, `Question card send failed id=${request.requestId}`, "warn");
+  }
+  return messageId;
 }
 
 async function sendQuestionCards(
@@ -143,9 +326,16 @@ async function sendQuestionCards(
     provider: MessageProvider;
     message: IncomingMessage;
     logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void;
+    sessionId?: string;
+    directory?: string;
   },
 ): Promise<boolean> {
   const specs = extractQuestionSpecs(response);
+  logWith(
+    options.logger,
+    `Question cards: parse attempt specs=${specs.length}`,
+    "debug",
+  );
   if (specs.length === 0) {
     const parts = extractPartsFromPromptResult(response);
     const toolParts = parts.filter(
@@ -173,42 +363,70 @@ async function sendQuestionCards(
           : (state as Record<string, unknown>).output;
       return `question:${formatValue(input)}`;
     });
+    const toolSnapshots = toolParts.map((part) => {
+      const name = typeof part.tool === "string" ? part.tool : "unknown";
+      const state = isRecord(part.state) ? part.state : undefined;
+      if (!state) return `[${name}:missing-state]`;
+      const status =
+        typeof (state as Record<string, unknown>).status === "string"
+          ? (state as Record<string, unknown>).status
+          : "unknown";
+      const input =
+        typeof (state as Record<string, unknown>).input !== "undefined"
+          ? (state as Record<string, unknown>).input
+          : (state as Record<string, unknown>).output;
+      return `${name}:${status}:${formatValue(input)}`;
+    });
     logWith(
       options.logger,
       `Question cards: no specs parsed; parts=${parts.length} tools=[${toolNames}] questionParts=${questionParts.length} details=${questionSnapshots.join(" | ")}`,
       "debug",
     );
+    logWith(
+      options.logger,
+      `Question cards: tool snapshots ${toolSnapshots.join(" | ")}`,
+      "debug",
+    );
     return false;
   }
   logWith(options.logger, `Question cards: ${specs.length} questions parsed`, "debug");
-  const feishuClient = options.provider.getFeishuClient?.();
-  if (!feishuClient || typeof feishuClient.replyQuestionCardWithId !== "function") {
-    logWith(options.logger, "Question card skipped: provider has no card sender", "debug");
-    return false;
-  }
-
-  const replyInThread = Boolean(options.message.threadId);
-  let sent = false;
+  const grouped = new Map<string, QuestionInput[]>();
   for (const spec of specs) {
-    logWith(
-      options.logger,
-      `Sending question card id=${spec.id} title=${spec.title} options=${spec.options.length}`,
-      "debug",
-    );
-    const messageId = await feishuClient.replyQuestionCardWithId(
-      options.message.messageId,
-      {
-        title: spec.title,
-        questionId: spec.id,
-        questionText: spec.question,
-        options: spec.options,
-      },
-      { replyInThread },
-    );
-    if (!messageId) {
-      logWith(options.logger, `Question card send failed id=${spec.id}`, "warn");
+    if (!grouped.has(spec.requestId)) grouped.set(spec.requestId, []);
+    const list = grouped.get(spec.requestId);
+    if (!list) continue;
+    list[spec.questionIndex] = {
+      question: spec.question,
+      header: spec.title,
+      options: spec.options,
+      multiple: spec.multiple,
+    };
+  }
+  let sent = false;
+  if (options.sessionId && options.directory) {
+    for (const [requestId, questions] of grouped) {
+      registerPendingQuestion(
+        { requestId, questions },
+        {
+          sessionId: options.sessionId,
+          directory: options.directory,
+          logger: options.logger,
+        },
+      );
+      const messageId = await sendQuestionCardsFromRequest(
+        { requestId, questions },
+        {
+          provider: options.provider,
+          message: options.message,
+          logger: options.logger,
+        },
+      );
+      const pending = pendingQuestions.get(requestId);
+      if (pending && messageId) {
+        pending.cardMessageId = messageId;
+        sent = true;
+      }
     }
-    if (messageId) sent = true;
   }
   return sent;
 }
@@ -347,7 +565,11 @@ export async function sendPrompt({
   opencodeConfig?: Config;
   streaming?: StreamingConfig;
 }): Promise<void> {
-  const directory = getChannelDirectory(message.channelId) || projectDirectory;
+  const directory = resolveAccessibleDirectory(
+    message.channelId,
+    projectDirectory,
+    logger,
+  );
   setChannelDirectory(message.channelId, directory);
 
   const getClient = await initializeOpencodeForDirectory(
@@ -401,8 +623,9 @@ export async function sendPrompt({
     logWith(logger, `Using agent preference: ${agentPreference}`, "info");
   }
 
-  let streamController: { start: () => void; stop: () => void } | null = null;
-  let streamSink: ReturnType<typeof createFeishuStreamSink> | null = null;
+    let streamController: { start: () => void; stop: () => void } | null = null;
+    let streamSink: ReturnType<typeof createFeishuStreamSink> | null = null;
+    let questionAsked = false;
 
   try {
     const modelParam = await resolveModel(
@@ -429,8 +652,8 @@ export async function sendPrompt({
       provider.id === "feishu" &&
       typeof provider.updateMessage === "function";
 
-    if (streamingEnabled) {
-      try {
+    try {
+      if (streamingEnabled) {
         streamSink = createFeishuStreamSink({
           provider,
           message,
@@ -443,32 +666,48 @@ export async function sendPrompt({
 
         const placeholderId = await streamSink.start();
         activeStreams.set(message.threadId, { placeholderId });
-
-        streamController = await createStreamingController({
-          directory,
-          sessionId,
-          threadId: message.threadId,
-          abortSignal: controller.signal,
-          startedAt: promptStartedAt,
-          onTextUpdate: async (text) => {
-            if (!streamSink) return;
-            await streamSink.render(text);
-          },
-          logger,
-        });
-
-        streamController.start();
-      } catch (error) {
-        const described = describeError(error);
-        logWith(
-          logger,
-          `Streaming init failed session=${sessionId} directory=${directory}; ${described.summary}`,
-          "warn",
-        );
-        streamController = null;
-        streamSink = null;
-        activeStreams.delete(message.threadId);
       }
+
+      streamController = await createStreamingController({
+        directory,
+        sessionId,
+        threadId: message.threadId,
+        abortSignal: controller.signal,
+        startedAt: promptStartedAt,
+        onTextUpdate: streamingEnabled
+          ? async (text) => {
+              if (!streamSink) return;
+              await streamSink.render(text);
+            }
+          : undefined,
+        onQuestionAsked: async (questionRequest) => {
+          const normalized = normalizeQuestionInputs(questionRequest);
+          if (!normalized) {
+            logWith(logger, "Question cards: unable to parse question.asked payload", "debug");
+            return;
+          }
+          questionAsked = true;
+          registerPendingQuestion(normalized, { sessionId, directory, logger });
+          const messageId = await sendQuestionCardsFromRequest(normalized, { provider, message, logger });
+          const pending = pendingQuestions.get(normalized.requestId);
+          if (pending && messageId) {
+            pending.cardMessageId = messageId;
+          }
+        },
+        logger,
+      });
+
+      streamController.start();
+    } catch (error) {
+      const described = describeError(error);
+      logWith(
+        logger,
+        `Streaming init failed session=${sessionId} directory=${directory}; ${described.summary}`,
+        "warn",
+      );
+      streamController = null;
+      streamSink = null;
+      activeStreams.delete(message.threadId);
     }
 
     const response = await getClient().session.prompt({
@@ -498,7 +737,15 @@ export async function sendPrompt({
     }
 
     const replyText = extractTextFromPromptResult(response);
-    await sendQuestionCards(response, { provider, message, logger });
+    if (!questionAsked) {
+      await sendQuestionCards(response, {
+        provider,
+        message,
+        logger,
+        sessionId,
+        directory,
+      });
+    }
     const footer = await buildFooter(response, {
       sessionId,
       model: modelParam,

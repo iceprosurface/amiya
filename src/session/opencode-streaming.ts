@@ -8,7 +8,12 @@ export interface StreamingControllerOptions {
   threadId: string
   abortSignal: AbortSignal
   startedAt: number
-  onTextUpdate: (text: string, isComplete: boolean) => Promise<void>
+  onTextUpdate?: (text: string, isComplete: boolean) => Promise<void>
+  onQuestionAsked?: (questionRequest: {
+    id?: string
+    sessionID?: string
+    questions?: unknown
+  }) => Promise<void>
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void
 }
 
@@ -39,12 +44,25 @@ type MessagePartUpdatedEvent = {
   }
 }
 
+type QuestionAskedEvent = {
+  type: "question.asked"
+  properties?: {
+    id?: string
+    sessionID?: string
+    questions?: unknown
+  }
+}
+
 function isMessageUpdatedEvent(event: unknown): event is MessageUpdatedEvent {
   return isRecord(event) && event.type === "message.updated"
 }
 
 function isMessagePartUpdatedEvent(event: unknown): event is MessagePartUpdatedEvent {
   return isRecord(event) && event.type === "message.part.updated"
+}
+
+function isQuestionAskedEvent(event: unknown): event is QuestionAskedEvent {
+  return isRecord(event) && event.type === "question.asked"
 }
 
 export async function createStreamingController(
@@ -70,6 +88,7 @@ export async function createStreamingController(
   let started = false
 
   const handleTextUpdate = async (text: string, isComplete: boolean) => {
+    if (!options.onTextUpdate) return
     try {
       await options.onTextUpdate(text, isComplete)
     } catch (error) {
@@ -87,6 +106,7 @@ export async function createStreamingController(
   }
 
   const updateTextCache = async () => {
+    if (!options.onTextUpdate) return
     if (!assistantMessageId) return
     const bucket = messageParts.get(assistantMessageId)
     if (!bucket) return
@@ -178,6 +198,14 @@ export async function createStreamingController(
 
       if (assistantMessageId && messageId === assistantMessageId) {
         await updateTextCache()
+      }
+    }
+
+    if (isQuestionAskedEvent(event)) {
+      const payload = event.properties
+      if (!payload || payload.sessionID !== options.sessionId) return
+      if (options.onQuestionAsked) {
+        await options.onQuestionAsked(payload)
       }
     }
   }
