@@ -15,7 +15,7 @@ import { getOpencodeSystemMessage } from "../system-message.js";
 import { OpenCodeApiError } from "../errors.js";
 import { sendReply } from "./messaging.js";
 import { activeRequests, activeStreams } from "./state.js";
-import { extractTextFromPromptResult } from "./format.js";
+import { extractPartsFromPromptResult, extractTextFromPromptResult } from "./format.js";
 import { buildFooter } from "./stats.js";
 import { buildFailureReport, describeError, isRecord, logWith, toUserErrorMessage } from "./utils.js";
 import { createStreamingController } from "./opencode-streaming.js";
@@ -80,17 +80,8 @@ type QuestionSpec = {
 };
 
 function extractQuestionSpecs(result: unknown): QuestionSpec[] {
-  let parts: unknown = [];
-  if (isRecord(result)) {
-    const data = result.data;
-    if (isRecord(data) && Array.isArray(data.parts)) {
-      parts = data.parts;
-    } else if (Array.isArray(result.parts)) {
-      parts = result.parts;
-    }
-  }
-
-  if (!Array.isArray(parts)) return [];
+  const parts = extractPartsFromPromptResult(result);
+  if (parts.length === 0) return [];
 
   const specs: QuestionSpec[] = [];
   let questionIndex = 0;
@@ -124,7 +115,7 @@ function extractQuestionSpecs(result: unknown): QuestionSpec[] {
           const label = typeof opt.label === "string" ? opt.label : "";
           if (!label) return null;
           const description = typeof opt.description === "string" ? opt.description : undefined;
-          return { label, description };
+          return description ? { label, description } : { label };
         })
         .filter((opt): opt is { label: string; description?: string } => Boolean(opt));
       if (!question || options.length === 0) continue;

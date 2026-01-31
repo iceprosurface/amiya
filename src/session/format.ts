@@ -1,17 +1,34 @@
 import { isRecord } from "./utils.js";
 
-export function extractTextFromPromptResult(result: unknown): string {
-  let parts: unknown = [];
-  if (isRecord(result)) {
-    const data = result.data;
-    if (isRecord(data) && Array.isArray(data.parts)) {
-      parts = data.parts;
-    } else if (Array.isArray(result.parts)) {
-      parts = result.parts;
-    }
-  }
+export function extractPartsFromPromptResult(result: unknown): unknown[] {
+  if (!isRecord(result)) return [];
 
-  if (!Array.isArray(parts)) return "";
+  const data = isRecord(result.data) ? result.data : undefined;
+  if (Array.isArray(data?.parts)) return data.parts;
+  if (Array.isArray(result.parts)) return result.parts;
+
+  const message = isRecord(data?.message) ? data.message : undefined;
+  if (Array.isArray(message?.parts)) return message.parts;
+  const messageContent = isRecord(message?.content) ? message.content : undefined;
+  if (Array.isArray(messageContent?.parts)) return messageContent.parts;
+
+  const messages = Array.isArray(data?.messages) ? data.messages : undefined;
+  const firstMessage = isRecord(messages?.[0]) ? messages?.[0] : undefined;
+  if (Array.isArray(firstMessage?.parts)) return firstMessage.parts;
+  const firstContent = isRecord(firstMessage?.content) ? firstMessage.content : undefined;
+  if (Array.isArray(firstContent?.parts)) return firstContent.parts;
+
+  const resultData = isRecord(data?.result) ? data.result : undefined;
+  if (Array.isArray(resultData?.parts)) return resultData.parts;
+  const resultMessage = isRecord(resultData?.message) ? resultData.message : undefined;
+  if (Array.isArray(resultMessage?.parts)) return resultMessage.parts;
+
+  return [];
+}
+
+export function extractTextFromPromptResult(result: unknown): string {
+  const parts = extractPartsFromPromptResult(result);
+  if (parts.length === 0) return "";
 
   const textParts: string[] = [];
   const toolOutputs: string[] = [];

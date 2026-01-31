@@ -20,6 +20,33 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     if (logger) logger(`[FeishuProvider] ${msg}`, level)
   }
 
+  const recentMessageIds = new Map<string, number>()
+  const messageDedupeTtlMs = 10 * 60 * 1000
+  const messageDedupeMaxSize = 1000
+
+  function shouldHandleMessage(messageId: string): boolean {
+    if (!messageId) return true
+    const now = Date.now()
+    const seenAt = recentMessageIds.get(messageId)
+    if (seenAt && now - seenAt < messageDedupeTtlMs) return false
+
+    recentMessageIds.set(messageId, now)
+    if (recentMessageIds.size > messageDedupeMaxSize) {
+      for (const [id, ts] of recentMessageIds) {
+        if (now - ts >= messageDedupeTtlMs) {
+          recentMessageIds.delete(id)
+        }
+      }
+      while (recentMessageIds.size > messageDedupeMaxSize) {
+        const oldestId = recentMessageIds.keys().next().value as string | undefined
+        if (!oldestId) break
+        recentMessageIds.delete(oldestId)
+      }
+    }
+
+    return true
+  }
+
   const providerId = 'feishu' as const
 
   function parseMessageContent(content: string): string {
@@ -91,6 +118,12 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     const channelId = feishuEvent.message.chat_id
     if (!feishuClient.isChatAllowed(channelId)) {
       log(`Ignoring message from disallowed chat ${channelId}`, 'debug')
+      return
+    }
+
+    const messageId = feishuEvent.message.message_id
+    if (!shouldHandleMessage(messageId)) {
+      log(`Duplicate message ignored: ${messageId}`, 'debug')
       return
     }
 
