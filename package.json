@@ -1,0 +1,38 @@
+{
+  "name": "amiya",
+  "version": "0.1.0",
+  "description": "飞书控制 opencode 的插件",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "start": "tsx watch --exclude \"./logs/**/*\" --exclude \"./.amiya/**/*\" src/index.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "feishu",
+    "lark"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.42.0",
+    "@opencode-ai/plugin": "latest",
+    "@opencode-ai/sdk": "^1.1.39",
+    "better-sqlite3": "^11.8.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.0.0"
+  }
+}

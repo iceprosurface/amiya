@@ -1,0 +1,14 @@
+.amiya
+.opencode
+.tmp
+.DS_Store
+logs
+dist
+node_modules
+.env
+.env.*
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+.idea
+.vscode
