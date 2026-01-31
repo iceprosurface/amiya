@@ -141,7 +141,37 @@ async function sendQuestionCards(
   },
 ): Promise<boolean> {
   const specs = extractQuestionSpecs(response);
-  if (specs.length === 0) return false;
+  if (specs.length === 0) {
+    const parts = extractPartsFromPromptResult(response);
+    const toolParts = parts.filter(
+      (part) => isRecord(part) && part.type === "tool",
+    ) as Array<Record<string, unknown>>;
+    const toolNames = toolParts
+      .map((part) => (typeof part.tool === "string" ? part.tool : "unknown"))
+      .join(",");
+    const questionParts = toolParts.filter((part) => part.tool === "question");
+    const formatValue = (value: unknown) => {
+      if (typeof value === "string") return value.length > 800 ? `${value.slice(0, 800)}…` : value;
+      try {
+        const text = JSON.stringify(value);
+        return text.length > 800 ? `${text.slice(0, 800)}…` : text;
+      } catch {
+        return "[unserializable]";
+      }
+    };
+    const questionSnapshots = questionParts.map((part) => {
+      const state = isRecord(part.state) ? part.state : undefined;
+      if (!state) return "[question:missing-state]";
+      const input = isRecord(state.input) ? state.input : state.output;
+      return `question:${formatValue(input)}`;
+    });
+    logWith(
+      options.logger,
+      `Question cards: no specs parsed; parts=${parts.length} tools=[${toolNames}] questionParts=${questionParts.length} details=${questionSnapshots.join(" | ")}`,
+      "debug",
+    );
+    return false;
+  }
   logWith(options.logger, `Question cards: ${specs.length} questions parsed`, "debug");
   const feishuClient = options.provider.getFeishuClient?.();
   if (!feishuClient || typeof feishuClient.replyQuestionCardWithId !== "function") {
