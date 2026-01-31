@@ -78,7 +78,11 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
 
   let messageHandler: ((
     msg: IncomingMessage,
-    extra?: { isCardAction: boolean; cardActionData?: { action: 'approve' | 'reject'; requestId: string } },
+    extra?: {
+      isCardAction: boolean
+      cardActionData?: { action: 'approve' | 'reject'; requestId: string }
+      questionResponse?: { questionId: string; answerLabel: string }
+    },
   ) => void | Promise<void>) | null = null
 
   eventClient.onMessage(async (feishuEvent) => {
@@ -112,11 +116,28 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       raw: undefined,
     }
 
+    if (cardAction.action === 'question') {
+      if (!cardAction.questionId || !cardAction.answerLabel) {
+        log(`Question card action missing data: ${JSON.stringify(cardAction)}`, 'warn')
+        return
+      }
+      void Promise.resolve(messageHandler(incomingMessage, {
+        isCardAction: true,
+        questionResponse: {
+          questionId: cardAction.questionId,
+          answerLabel: cardAction.answerLabel,
+        },
+      })).catch((error) => {
+        log(`Card action handler failed: ${error}`, 'error')
+      })
+      return
+    }
+
     void Promise.resolve(messageHandler(incomingMessage, {
       isCardAction: true,
       cardActionData: {
         action: cardAction.action,
-        requestId: cardAction.requestId,
+        requestId: cardAction.requestId || '',
       },
     })).catch((error) => {
       log(`Card action handler failed: ${error}`, 'error')
@@ -135,7 +156,11 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
 
   function onMessage(handler: (
     msg: IncomingMessage,
-    extra?: { isCardAction: boolean; cardActionData?: { action: 'approve' | 'reject'; requestId: string } },
+    extra?: {
+      isCardAction: boolean
+      cardActionData?: { action: 'approve' | 'reject'; requestId: string }
+      questionResponse?: { questionId: string; answerLabel: string }
+    },
   ) => void | Promise<void>): void {
     messageHandler = handler
   }

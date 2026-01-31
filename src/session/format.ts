@@ -46,6 +46,9 @@ export function extractTextFromPromptResult(result: unknown): string {
 
     if (type === "tool") {
       const toolName = typeof part.tool === "string" ? part.tool : "tool";
+      if (toolName === "question") {
+        continue;
+      }
       const state = isRecord(part.state) ? part.state : undefined;
       if (!state) continue;
       const status = typeof state.status === "string" ? state.status : "unknown";

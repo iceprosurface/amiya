@@ -50,6 +50,10 @@ export type SessionHandlerOptions = {
     action: "approve" | "reject";
     requestId: string;
   };
+  questionResponse?: {
+    questionId: string;
+    answerLabel: string;
+  };
   botUserId?: string;
 };
 
@@ -57,7 +61,7 @@ export async function handleIncomingMessage(
   message: IncomingMessage,
   options: SessionHandlerOptions,
 ): Promise<void> {
-  if (options.isCardAction) {
+  if (options.isCardAction && !options.questionResponse) {
     await handleCardAction(message, options);
     return;
   }
@@ -65,6 +69,11 @@ export async function handleIncomingMessage(
   if (options.requireUserWhitelist && !isUserInWhitelist(message.channelId, message.userId)) {
     await handleUserNotWhitelisted(message, options);
     return;
+  }
+
+  const isQuestionResponse = Boolean(options.questionResponse);
+  if (options.questionResponse) {
+    message.text = options.questionResponse.answerLabel;
   }
 
   const command = parseCommand(message.text);
@@ -82,7 +91,7 @@ export async function handleIncomingMessage(
     Boolean(message.threadId) &&
     Boolean(message.messageId) &&
     message.threadId !== message.messageId;
-  if (mentionRequired && !isThreadReply && !isBotMentioned(message, options.botUserId)) {
+  if (!isQuestionResponse && mentionRequired && !isThreadReply && !isBotMentioned(message, options.botUserId)) {
     return;
   }
 

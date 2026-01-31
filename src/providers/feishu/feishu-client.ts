@@ -96,6 +96,54 @@ export function createFeishuClient(
     }
   }
 
+  const buildQuestionCardContent = (params: {
+    title: string
+    questionId: string
+    questionText: string
+    options: Array<{ label: string; description?: string }>
+  }) => {
+    const optionText = params.options
+      .map((opt) => (opt.description ? `- **${opt.label}**：${opt.description}` : `- **${opt.label}**`))
+      .join('\n')
+
+    return {
+      config: {
+        wide_screen_mode: true,
+      },
+      header: {
+        template: 'blue',
+        title: {
+          content: params.title || '请选择',
+          tag: 'plain_text',
+        },
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**${params.questionText}**\n${optionText}`,
+          },
+        },
+        {
+          tag: 'action',
+          actions: params.options.map((opt) => ({
+            tag: 'button',
+            text: {
+              tag: 'plain_text',
+              content: opt.label,
+            },
+            value: {
+              action: 'question',
+              question_id: params.questionId,
+              answer_label: opt.label,
+            },
+          })),
+        },
+      ],
+    }
+  }
+
   return {
     async sendTextMessage(chatId: string, text: string): Promise<boolean> {
       try {
@@ -364,6 +412,42 @@ export function createFeishuClient(
         return messageId
       } catch (error) {
         log(`Send approval card failed: ${error}`, 'error')
+        return null
+      }
+    },
+
+    async replyQuestionCardWithId(
+      messageId: string,
+      params: {
+        title: string
+        questionId: string
+        questionText: string
+        options: Array<{ label: string; description?: string }>
+      },
+      options?: { replyInThread?: boolean },
+    ): Promise<string | null> {
+      try {
+        const cardContent = buildQuestionCardContent(params)
+        const replyParams: Parameters<typeof client.im.message.reply>[0] = {
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        }
+
+        if (options?.replyInThread) {
+          ;(replyParams.data as Record<string, unknown>).reply_in_thread = true
+        }
+
+        const result: unknown = await client.im.message.reply(replyParams)
+        const replyId = extractMessageId(result)
+        if (!replyId) {
+          log(`Question card reply to ${messageId} but missing message_id`, 'warn')
+        }
+        return replyId
+      } catch (error) {
+        log(`Reply question card failed: ${error}`, 'error')
         return null
       }
     },

@@ -17,7 +17,7 @@ import { sendReply } from "./messaging.js";
 import { activeRequests, activeStreams } from "./state.js";
 import { extractTextFromPromptResult } from "./format.js";
 import { buildFooter } from "./stats.js";
-import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
+import { buildFailureReport, describeError, isRecord, logWith, toUserErrorMessage } from "./utils.js";
 import { createStreamingController } from "./opencode-streaming.js";
 import { createFeishuStreamSink } from "./feishu-stream-sink.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
@@ -70,6 +70,109 @@ export async function resolveDefaultModel(
   }
 
   return null;
+}
+
+type QuestionSpec = {
+  id: string;
+  title: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+};
+
+function extractQuestionSpecs(result: unknown): QuestionSpec[] {
+  let parts: unknown = [];
+  if (isRecord(result)) {
+    const data = result.data;
+    if (isRecord(data) && Array.isArray(data.parts)) {
+      parts = data.parts;
+    } else if (Array.isArray(result.parts)) {
+      parts = result.parts;
+    }
+  }
+
+  if (!Array.isArray(parts)) return [];
+
+  const specs: QuestionSpec[] = [];
+  let questionIndex = 0;
+
+  for (const part of parts) {
+    if (!isRecord(part)) continue;
+    if (part.type !== "tool") continue;
+    if (part.tool !== "question") continue;
+    const state = isRecord(part.state) ? part.state : undefined;
+    if (!state) continue;
+
+    const rawInput = isRecord(state.input) ? state.input : state.output;
+    let parsed: unknown = rawInput;
+    if (typeof rawInput === "string") {
+      try {
+        parsed = JSON.parse(rawInput);
+      } catch {
+        parsed = undefined;
+      }
+    }
+    if (!isRecord(parsed)) continue;
+    const questions = Array.isArray(parsed.questions) ? parsed.questions : [];
+    for (const q of questions) {
+      if (!isRecord(q)) continue;
+      const question = typeof q.question === "string" ? q.question : "";
+      const header = typeof q.header === "string" ? q.header : "";
+      const optionsRaw = Array.isArray(q.options) ? q.options : [];
+      const options = optionsRaw
+        .map((opt) => {
+          if (!isRecord(opt)) return null;
+          const label = typeof opt.label === "string" ? opt.label : "";
+          if (!label) return null;
+          const description = typeof opt.description === "string" ? opt.description : undefined;
+          return { label, description };
+        })
+        .filter((opt): opt is { label: string; description?: string } => Boolean(opt));
+      if (!question || options.length === 0) continue;
+      const id = `q${questionIndex++}`;
+      specs.push({
+        id,
+        title: header || "请选择",
+        question,
+        options,
+      });
+    }
+  }
+
+  return specs;
+}
+
+async function sendQuestionCards(
+  response: unknown,
+  options: {
+    provider: MessageProvider;
+    message: IncomingMessage;
+    logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void;
+  },
+): Promise<boolean> {
+  const specs = extractQuestionSpecs(response);
+  if (specs.length === 0) return false;
+  const feishuClient = options.provider.getFeishuClient?.();
+  if (!feishuClient || typeof feishuClient.replyQuestionCardWithId !== "function") {
+    logWith(options.logger, "Question card skipped: provider has no card sender", "debug");
+    return false;
+  }
+
+  const replyInThread = Boolean(options.message.threadId);
+  let sent = false;
+  for (const spec of specs) {
+    const messageId = await feishuClient.replyQuestionCardWithId(
+      options.message.messageId,
+      {
+        title: spec.title,
+        questionId: spec.id,
+        questionText: spec.question,
+        options: spec.options,
+      },
+      { replyInThread },
+    );
+    if (messageId) sent = true;
+  }
+  return sent;
 }
 
 export async function resolveModel(
@@ -357,6 +460,7 @@ export async function sendPrompt({
     }
 
     const replyText = extractTextFromPromptResult(response);
+    await sendQuestionCards(response, { provider, message, logger });
     const footer = await buildFooter(response, {
       sessionId,
       model: modelParam,
@@ -371,7 +475,9 @@ export async function sendPrompt({
     } else {
       const combined = replyText.trim();
       const finalText = combined ? `${combined}\n\n${footer}` : footer;
-      await sendReply(provider, message, finalText);
+      if (finalText.trim().length > 0) {
+        await sendReply(provider, message, finalText);
+      }
     }
   } catch (error) {
     const described = describeError(error);

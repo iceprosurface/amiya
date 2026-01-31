@@ -91,6 +91,7 @@ export async function startAmiya(targetDir: string) {
       },
       isCardAction: extra?.isCardAction,
       cardActionData: extra?.cardActionData,
+      questionResponse: extra?.questionResponse,
     });
   });
 
