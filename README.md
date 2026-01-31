@@ -184,4 +184,4 @@ pnpm typecheck
 
 ## License
 
-ISC
+MIT

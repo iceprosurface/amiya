@@ -17,7 +17,7 @@
     "lark"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.42.0",
     "@opencode-ai/plugin": "latest",
