@@ -427,6 +427,10 @@ export function createFeishuClient(
       options?: { replyInThread?: boolean },
     ): Promise<string | null> {
       try {
+        log(
+          `Sending question card questionId=${params.questionId} options=${params.options.length}`,
+          'debug',
+        )
         const cardContent = buildQuestionCardContent(params)
         const replyParams: Parameters<typeof client.im.message.reply>[0] = {
           path: { message_id: messageId },

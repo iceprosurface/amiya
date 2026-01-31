@@ -142,6 +142,7 @@ async function sendQuestionCards(
 ): Promise<boolean> {
   const specs = extractQuestionSpecs(response);
   if (specs.length === 0) return false;
+  logWith(options.logger, `Question cards: ${specs.length} questions parsed`, "debug");
   const feishuClient = options.provider.getFeishuClient?.();
   if (!feishuClient || typeof feishuClient.replyQuestionCardWithId !== "function") {
     logWith(options.logger, "Question card skipped: provider has no card sender", "debug");
@@ -151,6 +152,11 @@ async function sendQuestionCards(
   const replyInThread = Boolean(options.message.threadId);
   let sent = false;
   for (const spec of specs) {
+    logWith(
+      options.logger,
+      `Sending question card id=${spec.id} title=${spec.title} options=${spec.options.length}`,
+      "debug",
+    );
     const messageId = await feishuClient.replyQuestionCardWithId(
       options.message.messageId,
       {
@@ -161,6 +167,9 @@ async function sendQuestionCards(
       },
       { replyInThread },
     );
+    if (!messageId) {
+      logWith(options.logger, `Question card send failed id=${spec.id}`, "warn");
+    }
     if (messageId) sent = true;
   }
   return sent;

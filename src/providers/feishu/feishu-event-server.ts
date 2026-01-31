@@ -82,6 +82,7 @@ export function createFeishuEventClient(
     const actionValue = action?.value as Record<string, unknown>
 
     log(`Card action raw payload: ${JSON.stringify(evRecord)}`, 'debug')
+    log(`Card action value: ${JSON.stringify(actionValue)}`, 'debug')
 
     const readString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.length > 0 ? value : undefined
