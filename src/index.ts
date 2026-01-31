@@ -176,9 +176,12 @@ const isMain =
   process.argv[1]?.endsWith("index.js") ||
   process.argv[1]?.endsWith("index.ts");
 if (isMain) {
+  // Some deployment wrappers historically invoked: `node dist/index.js -- /path`.
+  // Treat a literal `--` as an argument separator and use the next argument.
+  const rawTargetArg = process.argv[2] === "--" ? process.argv[3] : process.argv[2];
   const targetDir =
-    process.argv[2] && process.argv[2] !== "."
-      ? resolve(process.cwd(), process.argv[2])
+    rawTargetArg && rawTargetArg !== "."
+      ? resolve(process.cwd(), rawTargetArg)
       : process.cwd();
   startAmiya(targetDir).catch((err) => {
     defaultLogger.error(`Bot startup failed: ${err}`);

@@ -19,7 +19,9 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const bootstrapContent = `#!/usr/bin/env bash\nset -euo pipefail\n\ncd \"${repoRoot.replace(/\\/g, "\\\\")}\"\nnode \"${scriptPath.replace(/\\/g, "\\\\")}\" -- \"${targetDir.replace(/\\/g, "\\\\")}\"\n`;
+// Note: do not pass a literal `--` here; this is not an npm-script argv separator.
+// We want `process.argv[2]` to be the target directory inside dist/index.js.
+const bootstrapContent = `#!/usr/bin/env bash\nset -euo pipefail\n\ncd \"${repoRoot.replace(/\\/g, "\\\\")}\"\nnode \"${scriptPath.replace(/\\/g, "\\\\")}\" \"${targetDir.replace(/\\/g, "\\\\")}\"\n`;
 
 const configContent = `module.exports = {\n  apps: [\n    {\n      name: \"amiya\",\n      script: \"${bootstrapPath.replace(/\\/g, "\\\\")}\",\n      cwd: \"${repoRoot.replace(/\\/g, "\\\\")}\",\n      instances: 1,\n      autorestart: true,\n      watch: false,\n      env: {\n        NODE_ENV: \"production\",\n      },\n    },\n  ],\n};\n`;
 

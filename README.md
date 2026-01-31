@@ -160,7 +160,7 @@ pm2 logs amiya
 ## 项目结构
 
 ```
-99-apps/apps/amiya/
+amiya/
 ├── src/
 │   ├── index.ts
 │   ├── session/

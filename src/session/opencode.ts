@@ -93,7 +93,12 @@ function extractQuestionSpecs(result: unknown): QuestionSpec[] {
     const state = isRecord(part.state) ? part.state : undefined;
     if (!state) continue;
 
-    const rawInput = isRecord(state.input) ? state.input : state.output;
+    // Opencode may put the question payload in `state.input` (often as a JSON string),
+    // especially when the tool is still pending/running. Prefer `input` when present.
+    const rawInput =
+      typeof (state as Record<string, unknown>).input !== "undefined"
+        ? (state as Record<string, unknown>).input
+        : (state as Record<string, unknown>).output;
     let parsed: unknown = rawInput;
     if (typeof rawInput === "string") {
       try {
@@ -162,7 +167,10 @@ async function sendQuestionCards(
     const questionSnapshots = questionParts.map((part) => {
       const state = isRecord(part.state) ? part.state : undefined;
       if (!state) return "[question:missing-state]";
-      const input = isRecord(state.input) ? state.input : state.output;
+      const input =
+        typeof (state as Record<string, unknown>).input !== "undefined"
+          ? (state as Record<string, unknown>).input
+          : (state as Record<string, unknown>).output;
       return `question:${formatValue(input)}`;
     });
     logWith(
@@ -511,6 +519,23 @@ export async function sendPrompt({
     }
   } catch (error) {
     const described = describeError(error);
+    const errorWithCause = error as { cause?: unknown } | null;
+    const cause = errorWithCause?.cause;
+    const isHeadersTimeout = (value: unknown) => {
+      if (!value || typeof value !== "object") return false;
+      const record = value as Record<string, unknown>;
+      return (
+        record.name === "HeadersTimeoutError"
+        || record.code === "UND_ERR_HEADERS_TIMEOUT"
+      );
+    };
+    if (isHeadersTimeout(cause) || described.summary.includes("HeadersTimeoutError")) {
+      logWith(
+        logger,
+        "OpenCode 请求超时，可能在等待审批；请在 OpenCode 侧确认并放行该请求。",
+        "warn",
+      );
+    }
     logWith(
       logger,
       `Prompt failed session=${sessionId} directory=${directory}; ${described.summary}`,

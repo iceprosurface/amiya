@@ -248,7 +248,7 @@ generate_pm2_files() {
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$ROOT_DIR"
-node "$dist_entry" -- "$TARGET_DIR"
+node "$dist_entry" "$TARGET_DIR"
 EOF
   chmod +x "$bootstrap_path"
 
