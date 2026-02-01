@@ -1,6 +1,6 @@
 import type { Logger } from "winston";
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { setDataDir } from "./config.js";
 import { handleIncomingMessage } from "./session/session-handler.js";
@@ -26,6 +26,7 @@ export async function startAmiya(targetDir: string) {
 
   const { config, path: configPath } = loaded;
   logger.info(`Loaded config: ${configPath}`);
+  logger.info(`Config directory: ${dirname(configPath)}`);
 
   try {
     process.chdir(targetDir);
