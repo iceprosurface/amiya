@@ -180,7 +180,14 @@ const isMain =
 if (isMain) {
   // Some deployment wrappers historically invoked: `node dist/index.js -- /path`.
   // Treat a literal `--` as an argument separator and use the next argument.
-  const rawTargetArg = process.argv[2] === "--" ? process.argv[3] : process.argv[2];
+  const rawTargetArg = (() => {
+    const first = process.argv[2];
+    if (first === "--") {
+      const next = process.argv[3];
+      return next === "--" ? undefined : next;
+    }
+    return first === "--" ? undefined : first;
+  })();
   const targetDir =
     rawTargetArg && rawTargetArg !== "."
       ? resolve(process.cwd(), rawTargetArg)
