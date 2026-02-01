@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --exclude \"./logs/**/*\" --exclude \"./.amiya/**/*\" src/index.ts",
-    "start": "pm2 start ./.amiya/pm2.config.cjs",
+    "start": "pm2 start ./pm2.config.cjs",
     "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
