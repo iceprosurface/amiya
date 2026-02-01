@@ -799,10 +799,9 @@ export function createFeishuClient(
           ],
         }
 
-        await client.im.message.update({
+        await client.im.message.patch({
           path: { message_id: messageId },
           data: {
-            msg_type: 'interactive',
             content: JSON.stringify(cardContent),
           },
         })

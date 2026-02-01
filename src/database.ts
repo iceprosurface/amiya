@@ -108,6 +108,14 @@ export function getDatabase(): Database.Database {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS processed_commands (
+        message_id TEXT PRIMARY KEY,
+        command_name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
   }
 
   return db
@@ -306,6 +314,23 @@ export function updateQuestionRequestCard(requestId: string, cardMessageId: stri
       `UPDATE question_requests SET card_message_id = ?, updated_at = CURRENT_TIMESTAMP WHERE request_id = ?`,
     )
     .run(cardMessageId, requestId)
+}
+
+export function isCommandProcessed(messageId: string, commandName?: string): boolean {
+  const row = getDatabase()
+    .prepare('SELECT command_name FROM processed_commands WHERE message_id = ?')
+    .get(messageId) as { command_name: string } | undefined
+  if (!row) return false
+  if (!commandName) return true
+  return row.command_name === commandName
+}
+
+export function markCommandProcessed(messageId: string, commandName: string): void {
+  getDatabase()
+    .prepare(
+      'INSERT OR IGNORE INTO processed_commands (message_id, command_name) VALUES (?, ?)',
+    )
+    .run(messageId, commandName)
 }
 
 export function getQuestionRequest(requestId: string): {

@@ -21,6 +21,8 @@ import {
   setThreadSession,
   getThreadMentionRequired,
   setThreadMentionRequired,
+  isCommandProcessed,
+  markCommandProcessed,
 } from "../database.js";
 import { initializeOpencodeForDirectory } from "../opencode.js";
 import { sendReply } from "./messaging.js";
@@ -468,6 +470,20 @@ export async function handleCommand(
     }
     case "update":
     case "deploy": {
+      const messageId = message.messageId;
+      if (messageId && isCommandProcessed(messageId, command.name)) {
+        if (options.logger) {
+          options.logger(
+            `Command ${command.name} ignored for duplicate message ${messageId}`,
+            "info",
+          );
+        }
+        return true;
+      }
+      if (messageId) {
+        markCommandProcessed(messageId, command.name);
+      }
+
       let output = "";
       try {
         // 获取当前分支和最新提交
