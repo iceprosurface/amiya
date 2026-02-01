@@ -33,6 +33,7 @@ export interface MessageProvider {
         cardActionData?: { action: 'approve' | 'reject'; requestId: string }
         questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
         questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
+        permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
       },
     ) => void | Promise<void>,
   ): void

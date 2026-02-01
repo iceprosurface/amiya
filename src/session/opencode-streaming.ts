@@ -14,6 +14,12 @@ export interface StreamingControllerOptions {
     sessionID?: string
     questions?: unknown
   }) => Promise<void>
+  onPermissionAsked?: (permissionRequest: {
+    id?: string
+    sessionID?: string
+    permission?: string
+    patterns?: string[]
+  }) => Promise<void>
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void
 }
 
@@ -53,6 +59,16 @@ type QuestionAskedEvent = {
   }
 }
 
+type PermissionAskedEvent = {
+  type: "permission.asked"
+  properties?: {
+    id?: string
+    sessionID?: string
+    permission?: string
+    patterns?: string[]
+  }
+}
+
 function isMessageUpdatedEvent(event: unknown): event is MessageUpdatedEvent {
   return isRecord(event) && event.type === "message.updated"
 }
@@ -63,6 +79,10 @@ function isMessagePartUpdatedEvent(event: unknown): event is MessagePartUpdatedE
 
 function isQuestionAskedEvent(event: unknown): event is QuestionAskedEvent {
   return isRecord(event) && event.type === "question.asked"
+}
+
+function isPermissionAskedEvent(event: unknown): event is PermissionAskedEvent {
+  return isRecord(event) && event.type === "permission.asked"
 }
 
 export async function createStreamingController(
@@ -206,6 +226,14 @@ export async function createStreamingController(
       if (!payload || payload.sessionID !== options.sessionId) return
       if (options.onQuestionAsked) {
         await options.onQuestionAsked(payload)
+      }
+    }
+
+    if (isPermissionAskedEvent(event)) {
+      const payload = event.properties
+      if (!payload || payload.sessionID !== options.sessionId) return
+      if (options.onPermissionAsked) {
+        await options.onPermissionAsked(payload)
       }
     }
   }

@@ -15,13 +15,14 @@ import { initializeOpencodeForDirectory } from "../opencode.js";
 import { getOpencodeSystemMessage } from "../system-message.js";
 import { OpenCodeApiError } from "../errors.js";
 import { sendReply } from "./messaging.js";
-import { activeRequests, activeStreams, pendingQuestions } from "./state.js";
+import { activeRequests, activeStreams, pendingQuestions, pendingPermissions } from "./state.js";
 import { extractPartsFromPromptResult, extractTextFromPromptResult } from "./format.js";
 import { buildFooter } from "./stats.js";
 import { buildFailureReport, describeError, isRecord, logWith, toUserErrorMessage } from "./utils.js";
 import { createStreamingController } from "./opencode-streaming.js";
 import { createFeishuStreamSink } from "./feishu-stream-sink.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
+import { upsertQuestionRequest, updateQuestionRequestCard } from "../database.js";
 
 export function parseModelString(
   model: string,
@@ -114,6 +115,12 @@ type QuestionInput = {
 type QuestionRequestSpec = {
   requestId: string;
   questions: QuestionInput[];
+};
+
+type PermissionRequestSpec = {
+  requestId: string;
+  permission: string;
+  patterns: string[];
 };
 
 function extractQuestionSpecs(result: unknown): QuestionSpec[] {
@@ -260,9 +267,57 @@ function normalizeQuestionInputs(raw: unknown): QuestionRequestSpec | null {
   return { requestId, questions };
 }
 
+function normalizePermissionRequest(raw: unknown): PermissionRequestSpec | null {
+  if (!isRecord(raw)) return null;
+  const requestId = typeof raw.id === "string" ? raw.id : "";
+  const permission = typeof raw.permission === "string" ? raw.permission : "";
+  const patterns = Array.isArray(raw.patterns)
+    ? raw.patterns.filter((item) => typeof item === "string") as string[]
+    : [];
+  if (!requestId || !permission) return null;
+  return { requestId, permission, patterns };
+}
+
+function buildPermissionDedupeKey(
+  permission: PermissionRequestSpec,
+  directory: string,
+): string {
+  const normalized = [...permission.patterns].sort((a, b) => a.localeCompare(b));
+  return `${directory}::${permission.permission}::${normalized.join("|")}`;
+}
+
+async function sendPermissionCard(
+  permission: PermissionRequestSpec,
+  options: {
+    provider: MessageProvider;
+    message: IncomingMessage;
+    logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void;
+  },
+): Promise<string | null> {
+  const feishuClient = options.provider.getFeishuClient?.();
+  if (!feishuClient || typeof feishuClient.replyPermissionCardWithId !== "function") {
+    logWith(options.logger, "Permission card skipped: provider has no card sender", "debug");
+    return null;
+  }
+  const replyInThread = Boolean(options.message.threadId);
+  const messageId = await feishuClient.replyPermissionCardWithId(
+    options.message.messageId,
+    {
+      requestId: permission.requestId,
+      permission: permission.permission,
+      patterns: permission.patterns,
+    },
+    { replyInThread },
+  );
+  if (!messageId) {
+    logWith(options.logger, `Permission card send failed id=${permission.requestId}`, "warn");
+  }
+  return messageId;
+}
+
 function registerPendingQuestion(
   request: QuestionRequestSpec,
-  options: { sessionId: string; directory: string; logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void },
+  options: { sessionId: string; directory: string; threadId?: string; logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void },
 ) {
   if (pendingQuestions.has(request.requestId)) {
     logWith(options.logger, `Question request already pending id=${request.requestId}`, "debug");
@@ -275,6 +330,14 @@ function registerPendingQuestion(
     questions: request.questions,
     answers: {},
     answeredIndices: new Set<number>(),
+  });
+
+  upsertQuestionRequest({
+    requestId: request.requestId,
+    sessionId: options.sessionId,
+    directory: options.directory,
+    threadId: options.threadId || "",
+    questions: request.questions,
   });
 }
 
@@ -316,6 +379,9 @@ async function sendQuestionCardsFromRequest(
   );
   if (!messageId) {
     logWith(options.logger, `Question card send failed id=${request.requestId}`, "warn");
+  }
+  if (messageId) {
+    updateQuestionRequestCard(request.requestId, messageId);
   }
   return messageId;
 }
@@ -410,6 +476,7 @@ async function sendQuestionCards(
         {
           sessionId: options.sessionId,
           directory: options.directory,
+          threadId: options.message.threadId,
           logger: options.logger,
         },
       );
@@ -687,12 +754,52 @@ export async function sendPrompt({
             return;
           }
           questionAsked = true;
-          registerPendingQuestion(normalized, { sessionId, directory, logger });
+          if (streamSink && typeof streamSink.detach === "function") {
+            streamSink.detach();
+          }
+          registerPendingQuestion(normalized, {
+            sessionId,
+            directory,
+            threadId: message.threadId,
+            logger,
+          });
           const messageId = await sendQuestionCardsFromRequest(normalized, { provider, message, logger });
           const pending = pendingQuestions.get(normalized.requestId);
           if (pending && messageId) {
             pending.cardMessageId = messageId;
           }
+        },
+        onPermissionAsked: async (permissionRequest) => {
+          const normalized = normalizePermissionRequest(permissionRequest);
+          if (!normalized) {
+            logWith(logger, "Permission request ignored: invalid payload", "debug");
+            return;
+          }
+          const dedupeKey = buildPermissionDedupeKey(normalized, directory);
+          const existing = Array.from(pendingPermissions.values()).find(
+            (pending) => pending.dedupeKey === dedupeKey,
+          );
+          if (existing) {
+            if (!existing.requestIds.includes(normalized.requestId)) {
+              existing.requestIds.push(normalized.requestId);
+            }
+            pendingPermissions.set(normalized.requestId, existing);
+            logWith(logger, `Permission deduped id=${normalized.requestId}`, "debug");
+            return;
+          }
+
+          const messageId = await sendPermissionCard(normalized, { provider, message, logger });
+          if (!messageId) return;
+          const pending = {
+            requestIds: [normalized.requestId],
+            directory,
+            threadId: message.threadId,
+            messageId,
+            dedupeKey,
+            permission: normalized.permission,
+            patterns: normalized.patterns,
+          };
+          pendingPermissions.set(normalized.requestId, pending);
         },
         logger,
       });

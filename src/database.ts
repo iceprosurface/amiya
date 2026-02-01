@@ -95,6 +95,19 @@ export function getDatabase(): Database.Database {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS question_requests (
+        request_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        directory TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        questions_json TEXT NOT NULL,
+        card_message_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
   }
 
   return db
@@ -247,6 +260,91 @@ export function listChannelUsers(channelId: string): string[] {
     .prepare('SELECT user_id FROM channel_users WHERE channel_id = ?')
     .all(channelId) as Array<{ user_id: string }>
   return rows.map((row) => row.user_id)
+}
+
+export type StoredQuestion = {
+  question: string
+  header: string
+  options: Array<{ label: string; description?: string }>
+  multiple?: boolean
+}
+
+export function upsertQuestionRequest(params: {
+  requestId: string
+  sessionId: string
+  directory: string
+  threadId: string
+  questions: StoredQuestion[]
+  cardMessageId?: string
+}): void {
+  const questionsJson = JSON.stringify(params.questions)
+  getDatabase()
+    .prepare(
+      `INSERT INTO question_requests (request_id, session_id, directory, thread_id, questions_json, card_message_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(request_id) DO UPDATE SET
+         session_id = excluded.session_id,
+         directory = excluded.directory,
+         thread_id = excluded.thread_id,
+         questions_json = excluded.questions_json,
+         card_message_id = COALESCE(excluded.card_message_id, question_requests.card_message_id),
+         updated_at = CURRENT_TIMESTAMP`,
+    )
+    .run(
+      params.requestId,
+      params.sessionId,
+      params.directory,
+      params.threadId,
+      questionsJson,
+      params.cardMessageId || null,
+    )
+}
+
+export function updateQuestionRequestCard(requestId: string, cardMessageId: string): void {
+  getDatabase()
+    .prepare(
+      `UPDATE question_requests SET card_message_id = ?, updated_at = CURRENT_TIMESTAMP WHERE request_id = ?`,
+    )
+    .run(cardMessageId, requestId)
+}
+
+export function getQuestionRequest(requestId: string): {
+  requestId: string
+  sessionId: string
+  directory: string
+  threadId: string
+  questions: StoredQuestion[]
+  cardMessageId?: string
+} | undefined {
+  const row = getDatabase()
+    .prepare('SELECT * FROM question_requests WHERE request_id = ?')
+    .get(requestId) as {
+    request_id: string
+    session_id: string
+    directory: string
+    thread_id: string
+    questions_json: string
+    card_message_id?: string | null
+  } | undefined
+  if (!row) return undefined
+  try {
+    const questions = JSON.parse(row.questions_json) as StoredQuestion[]
+    if (!Array.isArray(questions)) return undefined
+    return {
+      requestId: row.request_id,
+      sessionId: row.session_id,
+      directory: row.directory,
+      threadId: row.thread_id,
+      questions,
+      cardMessageId: row.card_message_id || undefined,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+export function deleteQuestionRequest(requestId: string): void {
+  getDatabase().prepare('DELETE FROM question_requests WHERE request_id = ?').run(requestId)
 }
 
 export function createApprovalRequest(params: {

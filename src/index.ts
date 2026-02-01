@@ -93,6 +93,7 @@ export async function startAmiya(targetDir: string) {
       cardActionData: extra?.cardActionData,
       questionResponse: extra?.questionResponse,
       questionNav: extra?.questionNav,
+      permissionResponse: extra?.permissionResponse,
     });
   });
 

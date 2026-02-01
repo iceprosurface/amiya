@@ -110,6 +110,7 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       cardActionData?: { action: 'approve' | 'reject'; requestId: string }
       questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
       questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
+      permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
     },
   ) => void | Promise<void>) | null = null
 
@@ -179,6 +180,23 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
           questionId: cardAction.questionId,
           questionIndex: cardAction.questionIndex,
           direction: cardAction.direction,
+        },
+      })).catch((error) => {
+        log(`Card action handler failed: ${error}`, 'error')
+      })
+      return
+    }
+
+    if (cardAction.action === 'permission') {
+      if (!cardAction.requestId || !cardAction.reply) {
+        log(`Permission action missing data: ${JSON.stringify(cardAction)}`, 'warn')
+        return
+      }
+      void Promise.resolve(messageHandler(incomingMessage, {
+        isCardAction: true,
+        permissionResponse: {
+          requestId: cardAction.requestId,
+          reply: cardAction.reply,
         },
       })).catch((error) => {
         log(`Card action handler failed: ${error}`, 'error')

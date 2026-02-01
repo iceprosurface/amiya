@@ -34,3 +34,15 @@ export type PendingQuestion = {
 };
 
 export const pendingQuestions = new Map<string, PendingQuestion>();
+
+export type PendingPermission = {
+  requestIds: string[];
+  directory: string;
+  threadId: string;
+  messageId: string;
+  dedupeKey: string;
+  permission: string;
+  patterns: string[];
+};
+
+export const pendingPermissions = new Map<string, PendingPermission>();

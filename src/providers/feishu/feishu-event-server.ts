@@ -8,12 +8,13 @@ export type FeishuMessageEventData = MessageEventData
 export type MessageHandler = (event: MessageEventData) => void | Promise<void>
 
 export type CardActionHandler = (cardAction: {
-  action: 'approve' | 'reject' | 'question' | 'question-nav'
+  action: 'approve' | 'reject' | 'question' | 'question-nav' | 'permission'
   requestId?: string
   questionId?: string
   answerLabel?: string
   questionIndex?: number
   direction?: 'next' | 'prev'
+  reply?: 'once' | 'always' | 'reject'
   userId: string
   messageId: string
   channelId: string
@@ -97,11 +98,12 @@ export function createFeishuEventClient(
       return readString(cur)
     }
 
-    const cardAction = actionValue?.action as 'approve' | 'reject' | 'question' | 'question-nav' | undefined
+    const cardAction = actionValue?.action as 'approve' | 'reject' | 'question' | 'question-nav' | 'permission' | undefined
     const requestId = actionValue?.request_id as string | undefined
     const questionId = actionValue?.question_id as string | undefined
     const answerLabel = actionValue?.answer_label as string | undefined
     const direction = actionValue?.direction as 'next' | 'prev' | undefined
+    const reply = actionValue?.reply as 'once' | 'always' | 'reject' | undefined
     const questionIndex = actionValue?.question_index as number | string | undefined
 
     if (!cardAction) {
@@ -145,6 +147,7 @@ export function createFeishuEventClient(
             ? Number.parseInt(questionIndex, 10)
             : undefined,
         direction,
+        reply,
         userId: resolvedUserId,
         messageId: messageId || '',
         threadId: messageId || '',

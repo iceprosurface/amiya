@@ -47,6 +47,7 @@ export function createFeishuClient(
     return {
       config: {
         wide_screen_mode: true,
+        update_multi: true,
       },
       header: {
         template: 'turquoise',
@@ -155,6 +156,21 @@ export function createFeishuClient(
       },
     }))
 
+    const isLast = params.questionIndex + 1 >= params.totalQuestions
+    const nextButton: Record<string, unknown> = {
+      tag: 'button',
+      text: { tag: 'plain_text', content: params.nextLabel || '下一步' },
+      value: {
+        action: 'question-nav',
+        question_id: params.questionId,
+        question_index: params.questionIndex,
+        direction: 'next',
+      },
+    }
+    if (isLast) {
+      nextButton['type'] = 'primary'
+    }
+
     const navActions = [
       params.questionIndex > 0
         ? {
@@ -168,22 +184,13 @@ export function createFeishuClient(
             },
           }
         : null,
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: params.nextLabel || '下一步' },
-        type: params.questionIndex + 1 >= params.totalQuestions ? 'primary' : 'default',
-        value: {
-          action: 'question-nav',
-          question_id: params.questionId,
-          question_index: params.questionIndex,
-          direction: 'next',
-        },
-      },
+      nextButton,
     ].filter(Boolean)
 
     return {
       config: {
         wide_screen_mode: true,
+        update_multi: true,
       },
       header: {
         template: 'blue',
@@ -207,6 +214,106 @@ export function createFeishuClient(
         {
           tag: 'action',
           actions: navActions,
+        },
+      ],
+    }
+  }
+
+  const buildPermissionCardContent = (params: {
+    requestId: string
+    permission: string
+    patterns: string[]
+    status?: 'approved' | 'rejected' | 'pending'
+    replyLabel?: string
+  }) => {
+    const patternText = params.patterns.length > 0
+      ? params.patterns.map((pattern) => `- \`${pattern}\``).join('\n')
+      : '_无匹配规则_'
+    const statusLabel = params.status === 'approved'
+      ? `✅ 已允许（${params.replyLabel || 'once'}）`
+      : params.status === 'rejected'
+        ? '❌ 已拒绝'
+        : '⚠️ 需要权限确认'
+
+    if (params.status && params.status !== 'pending') {
+      const template = params.status === 'approved' ? 'green' : 'red'
+      return {
+        config: {
+          wide_screen_mode: true,
+          update_multi: true,
+        },
+        header: {
+          template,
+          title: {
+            content: '权限请求已处理',
+            tag: 'plain_text',
+          },
+        },
+        elements: [
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: `${statusLabel}\n\n**Type:** \`${params.permission}\`\n**Patterns:**\n${patternText}`,
+            },
+          },
+        ],
+      }
+    }
+
+    return {
+      config: {
+        wide_screen_mode: true,
+        update_multi: true,
+      },
+      header: {
+        template: 'orange',
+        title: {
+          content: '权限请求',
+          tag: 'plain_text',
+        },
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `${statusLabel}\n\n**Type:** \`${params.permission}\`\n**Patterns:**\n${patternText}`,
+          },
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '仅本次允许' },
+              type: 'primary',
+              value: {
+                action: 'permission',
+                request_id: params.requestId,
+                reply: 'once',
+              },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '始终允许' },
+              value: {
+                action: 'permission',
+                request_id: params.requestId,
+                reply: 'always',
+              },
+            },
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '拒绝' },
+              type: 'danger',
+              value: {
+                action: 'permission',
+                request_id: params.requestId,
+                reply: 'reject',
+              },
+            },
+          ],
         },
       ],
     }
@@ -528,6 +635,73 @@ export function createFeishuClient(
       }
     },
 
+    async replyPermissionCardWithId(
+      messageId: string,
+      params: {
+        requestId: string
+        permission: string
+        patterns: string[]
+      },
+      options?: { replyInThread?: boolean },
+    ): Promise<string | null> {
+      try {
+        const cardContent = buildPermissionCardContent({
+          requestId: params.requestId,
+          permission: params.permission,
+          patterns: params.patterns,
+          status: 'pending',
+        })
+        const replyParams: Parameters<typeof client.im.message.reply>[0] = {
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        }
+
+        if (options?.replyInThread) {
+          ;(replyParams.data as Record<string, unknown>).reply_in_thread = true
+        }
+
+        const result: unknown = await client.im.message.reply(replyParams)
+        return extractMessageId(result)
+      } catch (error) {
+        log(`Reply permission card failed: ${error}`, 'error')
+        return null
+      }
+    },
+
+    async updatePermissionCardWithId(
+      messageId: string,
+      params: {
+        requestId: string
+        permission: string
+        patterns: string[]
+        status: 'approved' | 'rejected'
+        replyLabel?: string
+      },
+    ): Promise<boolean> {
+      try {
+        const cardContent = buildPermissionCardContent({
+          requestId: params.requestId,
+          permission: params.permission,
+          patterns: params.patterns,
+          status: params.status,
+          replyLabel: params.replyLabel,
+        })
+        await client.im.message.patch({
+          path: { message_id: messageId },
+          data: {
+            content: JSON.stringify(cardContent),
+          },
+        })
+        return true
+      } catch (error) {
+        log(`Update permission card failed: ${error}`, 'error')
+        return false
+      }
+    },
+
     async updateQuestionCardWithId(
       messageId: string,
       params: {
@@ -544,10 +718,9 @@ export function createFeishuClient(
     ): Promise<boolean> {
       try {
         const cardContent = buildQuestionCardContent(params)
-        await client.im.message.update({
+        await client.im.message.patch({
           path: { message_id: messageId },
           data: {
-            msg_type: 'interactive',
             content: JSON.stringify(cardContent),
           },
         })
@@ -604,9 +777,10 @@ export function createFeishuClient(
         const color = status === 'approved' ? 'green' : 'red'
 
         const cardContent = {
-          config: {
-            wide_screen_mode: true,
-          },
+      config: {
+        wide_screen_mode: true,
+        update_multi: true,
+      },
           header: {
             template: color,
             title: {

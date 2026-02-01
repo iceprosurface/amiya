@@ -5,12 +5,13 @@ import { handleCardAction, handleUserNotWhitelisted } from "./approval.js";
 import { parseCommand, handleCommand, isBotMentioned } from "./commands.js";
 import { flushQueue } from "./queue.js";
 import { sendPrompt } from "./opencode.js";
-import { activeRequests, messageQueue, pendingQuestions } from "./state.js";
+import { activeRequests, messageQueue, pendingQuestions, pendingPermissions } from "./state.js";
 import type { PendingQuestion } from "./state.js";
 import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
 import { sendReply } from "./messaging.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
 import { getOpencodeClientV2 } from "../opencode.js";
+import { deleteQuestionRequest, getQuestionRequest } from "../database.js";
 
 export type SessionHandlerOptions = {
   provider: MessageProvider;
@@ -62,6 +63,10 @@ export type SessionHandlerOptions = {
     questionIndex?: number;
     direction: "next" | "prev";
   };
+  permissionResponse?: {
+    requestId: string;
+    reply: "once" | "always" | "reject";
+  };
   botUserId?: string;
 };
 
@@ -69,7 +74,7 @@ export async function handleIncomingMessage(
   message: IncomingMessage,
   options: SessionHandlerOptions,
 ): Promise<void> {
-  if (options.isCardAction && !options.questionResponse) {
+  if (options.isCardAction && !options.questionResponse && !options.questionNav && !options.permissionResponse) {
     await handleCardAction(message, options);
     return;
   }
@@ -106,10 +111,68 @@ export async function handleIncomingMessage(
     });
   };
 
+  if (options.permissionResponse) {
+    const { requestId, reply } = options.permissionResponse;
+    const pending = pendingPermissions.get(requestId);
+    if (!pending) {
+      logWith(options.logger, `Permission response ignored: missing pending request ${requestId}`, "warn");
+      return;
+    }
+
+    const clientV2 = getOpencodeClientV2(pending.directory);
+    if (!clientV2) {
+      logWith(options.logger, `Permission reply failed: no OpenCode client for ${pending.directory}`, "error");
+      return;
+    }
+
+    try {
+      await Promise.all(
+        pending.requestIds.map((id) =>
+          clientV2.permission.reply({ requestID: id, reply }),
+        ),
+      );
+      for (const id of pending.requestIds) {
+        pendingPermissions.delete(id);
+      }
+      const feishuClient = options.provider.getFeishuClient?.();
+      if (feishuClient && typeof feishuClient.updatePermissionCardWithId === "function") {
+        await feishuClient.updatePermissionCardWithId(pending.messageId, {
+          requestId,
+          permission: pending.permission,
+          patterns: pending.patterns,
+          status: reply === "reject" ? "rejected" : "approved",
+          replyLabel: reply,
+        });
+      }
+      logWith(options.logger, `Permission reply submitted ${requestId} (${reply})`, "info");
+    } catch (error) {
+      const described = describeError(error);
+      logWith(options.logger, `Permission reply failed ${requestId}: ${described.summary}`, "error");
+    }
+    return;
+  }
+
   const isQuestionResponse = Boolean(options.questionResponse || options.questionNav);
   if (options.questionResponse || options.questionNav) {
     const questionId = options.questionResponse?.questionId || options.questionNav?.questionId;
-    const pending = questionId ? pendingQuestions.get(questionId) : undefined;
+    let pending = questionId ? pendingQuestions.get(questionId) : undefined;
+    if (!pending && questionId) {
+      const stored = getQuestionRequest(questionId);
+      if (stored) {
+        pending = {
+          requestId: stored.requestId,
+          sessionId: stored.sessionId,
+          directory: stored.directory,
+          cardMessageId: stored.cardMessageId,
+          currentIndex: 0,
+          questions: stored.questions,
+          answers: {},
+          answeredIndices: new Set<number>(),
+        };
+        pendingQuestions.set(questionId, pending);
+        logWith(options.logger, `Question state restored ${questionId}`, "info");
+      }
+    }
     if (!pending) {
       logWith(options.logger, `Question action ignored: missing pending request ${questionId}`, "warn");
       return;
@@ -176,6 +239,7 @@ export async function handleIncomingMessage(
           answers,
         });
         pendingQuestions.delete(questionId!);
+        deleteQuestionRequest(questionId!);
         await updateQuestionCard(pending, cardMessageId, true);
         logWith(options.logger, `Question reply submitted ${questionId}`, "info");
       } catch (error) {
@@ -235,13 +299,16 @@ export async function handleIncomingMessage(
   }
 
   try {
+    const streamingOverride = isQuestionResponse
+      ? { enabled: false }
+      : options.streaming;
     await sendPrompt({
       message,
       provider: options.provider,
       projectDirectory: options.projectDirectory,
       logger: options.logger,
       opencodeConfig: options.opencodeConfig,
-      streaming: options.streaming,
+      streaming: streamingOverride,
     });
   } catch (error) {
     const described = describeError(error);
