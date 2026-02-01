@@ -4,7 +4,7 @@ module.exports = {
       name: "amiya",
       script: "dist/index.js",
       cwd: __dirname,
-      args: [process.env.AMIYA_TARGET_DIR || __dirname],
+      args: ["--start", process.env.AMIYA_TARGET_DIR || __dirname],
       instances: 1,
       autorestart: true,
       watch: false,

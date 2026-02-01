@@ -174,24 +174,39 @@ function loadFeishuConfig(
   return null;
 }
 
-const isMain =
-  process.argv[1]?.endsWith("index.js") ||
-  process.argv[1]?.endsWith("index.ts");
-if (isMain) {
-  // Some deployment wrappers historically invoked: `node dist/index.js -- /path`.
-  // Treat a literal `--` as an argument separator and use the next argument.
-  const rawTargetArg = (() => {
-    const first = process.argv[2];
-    if (first === "--") {
-      const next = process.argv[3];
-      return next === "--" ? undefined : next;
+function parseStartArgs(argv: string[]) {
+  const args = [...argv];
+  let start = false;
+  let target: string | undefined;
+
+  const startIndex = args.findIndex((arg) => arg === "--start" || arg.startsWith("--start="));
+  if (startIndex !== -1) {
+    start = true;
+    const arg = args[startIndex];
+    if (arg.startsWith("--start=")) {
+      target = arg.slice("--start=".length) || undefined;
+    } else {
+      const next = args[startIndex + 1];
+      if (next && !next.startsWith("-")) target = next;
     }
-    return first === "--" ? undefined : first;
-  })();
+  }
+
+  const sepIndex = args.indexOf("--");
+  if (sepIndex !== -1) {
+    const next = args[sepIndex + 1];
+    if (next && !next.startsWith("-")) target = next;
+  }
+
   const targetDir =
-    rawTargetArg && rawTargetArg !== "."
-      ? resolve(process.cwd(), rawTargetArg)
+    target && target !== "."
+      ? resolve(process.cwd(), target)
       : process.cwd();
+
+  return { start, targetDir };
+}
+
+const { start, targetDir } = parseStartArgs(process.argv.slice(2));
+if (start) {
   startAmiya(targetDir).catch((err) => {
     defaultLogger.error(`Bot startup failed: ${err}`);
     process.exit(1);

@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { IncomingMessage } from "../types.js";
@@ -501,6 +501,10 @@ export async function handleCommand(
             output += "✓ 依赖无变化，跳过 pnpm install\n";
           }
 
+          output += "开始构建...\n";
+          execSync("pnpm build", { encoding: "utf-8" });
+          output += "✓ 构建完成\n";
+
           // 重启服务
           output += "正在重启服务...\n";
           await sendReply(provider, message, output);
@@ -508,9 +512,21 @@ export async function handleCommand(
           // 先延迟发送回复，然后执行 pm2 restart
           setTimeout(() => {
             try {
-              execSync("pm2 restart amiya || pm2 restart bash --name amiya", { encoding: "utf-8" });
-            } catch (e) {
-              // PM2 restart 可能会终止进程，错误忽略
+              const child = spawn("pm2", ["restart", "amiya", "--update-env"], {
+                detached: true,
+                stdio: "ignore",
+              });
+              child.unref();
+            } catch {
+              try {
+                const child = spawn("pm2", ["start", "pm2.config.cjs"], {
+                  detached: true,
+                  stdio: "ignore",
+                });
+                child.unref();
+              } catch {
+                // ignore
+              }
             }
           }, 1000);
           return true;

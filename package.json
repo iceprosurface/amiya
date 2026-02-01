@@ -7,8 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --exclude \"./logs/**/*\" --exclude \"./.amiya/**/*\" src/index.ts",
-    "start": "pm2 start ./pm2.config.cjs",
+    "start": "pnpm build && pm2 start ./pm2.config.cjs",
     "build": "tsup",
+    "restart": "pm2 restart amiya --update-env",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
