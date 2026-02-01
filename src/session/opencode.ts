@@ -757,6 +757,7 @@ export async function sendPrompt({
           if (streamSink && typeof streamSink.detach === "function") {
             streamSink.detach();
           }
+          streamSink = null;
           registerPendingQuestion(normalized, {
             sessionId,
             directory,

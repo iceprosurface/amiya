@@ -204,7 +204,6 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
       currentMessageId = null
       messageIds = []
       updateCount = 0
-      lastRenderedText = ""
       logWith(logger, "Stream sink detached; future replies will append", "debug")
     },
     getMessageIds() {
