@@ -1,5 +1,6 @@
 import type { OpencodeClient } from "@opencode-ai/sdk";
 import { isRecord } from "./utils.js";
+import { getRuntimeVersion } from "../version.js";
 
 export type TokenTotals = {
   input: number;
@@ -122,9 +123,22 @@ export async function buildFooter(
     // ignore footer ratio failures
   }
 
-  let footer = `${formatDurationSeconds(durationSeconds)}完成`;
-  if (percentText) footer += ` ${percentText}`;
-  if (infoSessionId) footer += ` ${infoSessionId}.`;
-  if (modelId) footer += ` ${modelId}`;
-  return footer;
+  const lines: string[] = [];
+  const line1Parts = [`${formatDurationSeconds(durationSeconds)}完成`];
+  if (percentText) line1Parts.push(`上下文 ${percentText}`);
+  lines.push(line1Parts.join(" | "));
+
+  const line2Parts: string[] = [];
+  if (infoSessionId) line2Parts.push(`会话 ${infoSessionId}`);
+  if (modelId) line2Parts.push(`模型 ${modelId}`);
+  if (line2Parts.length > 0) {
+    lines.push(line2Parts.join(" | "));
+  }
+
+  const version = getRuntimeVersion();
+  if (version) {
+    lines.push(`版本 ${version}`);
+  }
+
+  return lines.join("\n");
 }

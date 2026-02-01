@@ -290,6 +290,11 @@ export async function handleIncomingMessage(
     const nextQueue = queue || [];
     nextQueue.push({ message, queuedAt: Date.now() });
     messageQueue.set(message.threadId, nextQueue);
+    logWith(
+      options.logger,
+      `Queue enqueue thread=${message.threadId} message=${message.messageId || "-"} size=${nextQueue.length}`,
+      "info",
+    );
     await sendReply(
       options.provider,
       message,
@@ -341,6 +346,7 @@ export async function handleIncomingMessage(
         opencodeConfig: options.opencodeConfig,
         streaming: options.streaming,
       }),
+      options.logger,
     );
   }
 }

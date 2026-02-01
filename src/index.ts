@@ -7,6 +7,7 @@ import { handleIncomingMessage } from "./session/session-handler.js";
 import { setupLogger, defaultLogger } from "./logger/index.js";
 import { acquireSingleInstanceLock } from "./runtime/single-instance-lock.js";
 import { createFeishuProvider } from "./providers/feishu/feishu-provider.js";
+import { getRuntimeVersion } from "./version.js";
 import {
   type FeishuConfig,
   validateConfig,
@@ -36,6 +37,11 @@ export async function startAmiya(targetDir: string) {
   }
 
   setDataDir(join(targetDir, ".amiya"));
+
+  const runtimeVersion = getRuntimeVersion();
+  if (runtimeVersion) {
+    logger.info(`Version: ${runtimeVersion}`);
+  }
 
   let lockRelease: (() => void) | null = null;
   try {
