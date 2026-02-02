@@ -408,6 +408,7 @@ export function createFeishuClient(
           tool: toolName,
           status,
           durationText: formatDurationText(part),
+          input: inputText,
         }
 
         if (status === 'completed') {
@@ -415,7 +416,7 @@ export function createFeishuClient(
         } else if (status === 'error') {
           run.output = errorText
         } else if (status === 'running' || status === 'pending') {
-          run.input = inputText
+          // input already set above
         } else if (outputText) {
           run.output = outputText
         }
