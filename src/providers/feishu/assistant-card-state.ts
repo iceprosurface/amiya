@@ -1,4 +1,5 @@
 import type { MessagePart } from '../../types.js'
+import { t } from '../../i18n/index.js'
 
 export type AssistantCardState = {
   cardId: string
@@ -261,7 +262,7 @@ export function buildAssistantCardText(state: AssistantCardState): string {
     if (state.showDetails) {
       lines.push(state.details.trim())
     } else {
-      lines.push('_工具输出已收起，可点击下方展开_')
+      lines.push(t('feishu.collapsedTool'))
     }
   }
 
@@ -269,7 +270,7 @@ export function buildAssistantCardText(state: AssistantCardState): string {
     if (state.showMeta) {
       lines.push(`---\n_${state.meta.trim()}_`)
     } else {
-      lines.push('_元信息已收起，可点击下方展开_')
+      lines.push(t('feishu.collapsedMeta'))
     }
   }
 
@@ -281,8 +282,8 @@ export function buildAssistantCardText(state: AssistantCardState): string {
 }
 
 export function splitAssistantDetails(text: string): { main: string; details?: string } {
-  const toolMarker = ASSISTANT_TOOL_OUTPUT_MARKER
-  const subtaskMarker = ASSISTANT_SUBTASK_MARKER
+  const toolMarker = getAssistantToolOutputMarker()
+  const subtaskMarker = getAssistantSubtaskMarker()
   const toolIndex = text.indexOf(toolMarker)
   const subtaskIndex = text.indexOf(subtaskMarker)
   const markerIndex = toolIndex >= 0
@@ -298,15 +299,15 @@ export function splitAssistantDetails(text: string): { main: string; details?: s
   return { main, details }
 }
 
-export const ASSISTANT_THINKING_MARKER = '— 思考中 —'
-export const ASSISTANT_SUBTASK_MARKER = '— 子任务 —'
-export const ASSISTANT_TOOL_OUTPUT_MARKER = '— 子任务/工具输出 —'
+export const getAssistantThinkingMarker = () => t('markers.thinking')
+export const getAssistantSubtaskMarker = () => t('markers.subtask')
+export const getAssistantToolOutputMarker = () => t('markers.toolOutput')
 
 export function splitAssistantThinkingBlock(text: string): { thinkingContent?: string; body: string } {
   const lines = text.split('\n')
   let i = 0
   while (i < lines.length && lines[i]?.trim().length === 0) i += 1
-  if (i >= lines.length || lines[i]?.trim() !== ASSISTANT_THINKING_MARKER) {
+  if (i >= lines.length || lines[i]?.trim() !== getAssistantThinkingMarker()) {
     return { body: text.trim() }
   }
   i += 1
@@ -320,7 +321,7 @@ export function splitAssistantThinking(text: string): { thinking: boolean; body:
   const lines = text.split('\n')
   let i = 0
   while (i < lines.length && lines[i]?.trim().length === 0) i += 1
-  if (i < lines.length && lines[i]?.trim() === ASSISTANT_THINKING_MARKER) {
+  if (i < lines.length && lines[i]?.trim() === getAssistantThinkingMarker()) {
     i += 1
     while (i < lines.length && lines[i]?.trim().length === 0) i += 1
     return { thinking: true, body: lines.slice(i).join('\n').trim() }
@@ -414,7 +415,9 @@ export function parseAssistantToolRuns(details?: string): AssistantToolRun[] {
 
     const attachmentNameMatch = rest.match(/\b([A-Za-z0-9._-]+\.(?:log|txt))\b/)
     const attachmentName = attachmentNameMatch?.[1]
-    const mentionsTooLong = rest.includes('输出过长') || rest.includes('too long')
+    const lowerRest = rest.toLowerCase()
+    const mentionsTooLong = lowerRest.includes('too long')
+      || rest.includes(t('feishu.outputTooLong'))
 
     if (!hasCodeBlock) {
       if (mentionsTooLong) {
@@ -443,17 +446,25 @@ export function splitFooterLines(text: string): { body: string; footer?: string 
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
   if (lines.length === 0) return { body: '' }
 
+  const durationPrefix = t('stats.duration', { value: '' })
+  const contextPrefix = t('stats.context', { value: '' })
+  const sessionPrefix = t('stats.session', { value: '' })
+  const modelPrefix = t('stats.model', { value: '' })
+  const versionPrefix = t('stats.version', { value: '' })
+  const doneLabel = t('labels.thinkingDone')
+  const contextLabel = t('stats.context', { value: '' }).trim()
+
   const footerLines: string[] = []
   while (lines.length > 0) {
     const last = lines[lines.length - 1]
     if (
-      last.startsWith('耗时 ')
-      || last.startsWith('上下文 ')
-      || last.startsWith('会话 ')
-      || last.startsWith('模型 ')
-      || last.startsWith('版本 ')
-      || last.includes('完成')
-      || last.includes('上下文')
+      last.startsWith(durationPrefix)
+      || last.startsWith(contextPrefix)
+      || last.startsWith(sessionPrefix)
+      || last.startsWith(modelPrefix)
+      || last.startsWith(versionPrefix)
+      || (doneLabel && last.includes(doneLabel))
+      || (contextLabel && last.includes(contextLabel))
     ) {
       footerLines.unshift(lines.pop() as string)
     } else {
@@ -473,10 +484,10 @@ export function detectPanelStates(text: string): {
   toolContent?: string
 } {
   const { cleanedText, toolRuns } = extractAmiyaXml(text)
-  const hasThinkingPanel = cleanedText.includes(ASSISTANT_THINKING_MARKER)
+  const hasThinkingPanel = cleanedText.includes(getAssistantThinkingMarker())
   const hasToolPanel = toolRuns.length > 0
-    || cleanedText.includes(ASSISTANT_TOOL_OUTPUT_MARKER)
-    || cleanedText.includes(ASSISTANT_SUBTASK_MARKER)
+    || cleanedText.includes(getAssistantToolOutputMarker())
+    || cleanedText.includes(getAssistantSubtaskMarker())
 
   let thinkingContent: string | undefined
   let toolContent: string | undefined
@@ -488,7 +499,7 @@ export function detectPanelStates(text: string): {
 
   if (hasToolPanel) {
     if (toolRuns.length > 0) {
-      toolContent = ASSISTANT_TOOL_OUTPUT_MARKER
+      toolContent = getAssistantToolOutputMarker()
     } else {
       const { body } = splitAssistantThinkingBlock(cleanedText)
       const { details } = splitAssistantDetails(body)

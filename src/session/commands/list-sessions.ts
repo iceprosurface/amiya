@@ -1,4 +1,5 @@
 import { listThreadSessions } from "../../database.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import type { CommandHandler } from "./shared.js";
 
@@ -6,7 +7,7 @@ export const handleListSessions: CommandHandler = async (message, _command, opti
   const { provider } = options;
   const sessions = listThreadSessions();
   if (sessions.length === 0) {
-    await sendReply(provider, message, "未找到会话。");
+    await sendReply(provider, message, t("commands.listSessionsNone"));
     return true;
   }
   const lines = sessions

@@ -1,4 +1,5 @@
 import { getThreadMentionRequired, setThreadMentionRequired } from "../../database.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import { parseBooleanArg } from "./shared.js";
 import type { CommandHandler } from "./shared.js";
@@ -11,7 +12,7 @@ export const handleMentionRequired: CommandHandler = async (message, command, op
     await sendReply(
       provider,
       message,
-      `当前线程需@机器人：${current ? "是" : "否"}。用法：/mention-required true|false`,
+      t("commands.mentionStatus", { value: current ? t("common.yes") : t("common.no") }),
     );
     return true;
   }
@@ -20,12 +21,16 @@ export const handleMentionRequired: CommandHandler = async (message, command, op
     await sendReply(
       provider,
       message,
-      "请先在 feishu.json 配置 botUserId（机器人 open_id / user_id），否则无法判断是否@。",
+      t("commands.mentionMissingBot"),
     );
     return true;
   }
 
   setThreadMentionRequired(message.threadId, value);
-  await sendReply(provider, message, `✅ 已设置该线程需@机器人：${value ? "是" : "否"}`);
+  await sendReply(
+    provider,
+    message,
+    t("commands.mentionSet", { value: value ? t("common.yes") : t("common.no") }),
+  );
   return true;
 };

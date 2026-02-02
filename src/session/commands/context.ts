@@ -1,5 +1,6 @@
 import { getThreadSession } from "../../database.js";
 import { initializeOpencodeForDirectory } from "../../opencode.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import { resolveModel } from "../opencode.js";
 import { addTokenTotals, getModelLimit, readTokensFromAssistantMessage } from "../stats.js";
@@ -24,7 +25,7 @@ export const handleContext: CommandHandler = async (message, command, options) =
   const sessionIdArg = command.args[0];
   const sessionId = sessionIdArg || getThreadSession(message.threadId);
   if (!sessionId) {
-    await sendReply(provider, message, "未绑定会话。使用 /resume <会话ID> 或 /context <会话ID>。");
+    await sendReply(provider, message, t("commands.contextNoSession"));
     return true;
   }
 
@@ -78,9 +79,9 @@ export const handleContext: CommandHandler = async (message, command, options) =
   const ratio = limit && limit.context > 0 ? lastInput / limit.context : null;
 
   const lines: string[] = [];
-  lines.push("上下文占用");
-  lines.push(`- 会话: ${sessionId}`);
-  lines.push(`- 目录: ${directory}`);
+  lines.push(t("commands.contextTitle"));
+  lines.push(t("commands.contextSession", { sessionId }));
+  lines.push(t("commands.contextDirectory", { directory }));
 
   if (sessionInfoResp.data) {
     const sessionInfo = sessionInfoResp.data as unknown;
@@ -88,30 +89,40 @@ export const handleContext: CommandHandler = async (message, command, options) =
       const created = sessionInfo.time.created;
       const updated = sessionInfo.time.updated;
       lines.push(
-        `- 会话时间: created=${safeDateTime(typeof created === "number" ? created : undefined)} updated=${safeDateTime(typeof updated === "number" ? updated : undefined)}`,
+        t("commands.contextTime", {
+          created: safeDateTime(typeof created === "number" ? created : undefined),
+          updated: safeDateTime(typeof updated === "number" ? updated : undefined),
+        }),
       );
     }
   }
 
   if (resolvedModel) {
-    lines.push(`- 模型: ${resolvedModel.providerID}/${resolvedModel.modelID}`);
+    lines.push(t("commands.contextModel", { model: `${resolvedModel.providerID}/${resolvedModel.modelID}` }));
   } else {
-    lines.push("- 模型: -");
+    lines.push(t("commands.contextModelEmpty"));
   }
 
   if (limit) {
-    lines.push(`- 上下文上限: ${formatNumber(limit.context)} tokens`);
-    lines.push(`- 输出上限: ${formatNumber(limit.output)} tokens`);
+    lines.push(t("commands.contextLimits", { value: formatNumber(limit.context) }));
+    lines.push(t("commands.contextOutputLimit", { value: formatNumber(limit.output) }));
   } else {
-    lines.push("- 上下文上限: -");
+    lines.push(t("commands.contextLimitsEmpty"));
   }
 
-  lines.push(
-    `- 消息数: user=${userCount} assistant=${assistantCount} total=${messageItems.length}`,
-  );
-  lines.push(
-    `- 累计用量(assistant): input=${formatNumber(totals.input)} output=${formatNumber(totals.output)} reasoning=${formatNumber(totals.reasoning)} cacheR=${formatNumber(totals.cacheRead)} cacheW=${formatNumber(totals.cacheWrite)} cost=${formatUsd(totalCost)}`,
-  );
+  lines.push(t("commands.contextMessageCount", {
+    user: userCount,
+    assistant: assistantCount,
+    total: messageItems.length,
+  }));
+  lines.push(t("commands.contextTotals", {
+    input: formatNumber(totals.input),
+    output: formatNumber(totals.output),
+    reasoning: formatNumber(totals.reasoning),
+    cacheR: formatNumber(totals.cacheRead),
+    cacheW: formatNumber(totals.cacheWrite),
+    cost: formatUsd(totalCost),
+  }));
 
   if (lastAssistant) {
     const time = isRecord(lastAssistant.time) ? lastAssistant.time : undefined;
@@ -122,14 +133,18 @@ export const handleContext: CommandHandler = async (message, command, options) =
         : typeof time?.created === "number"
           ? time.created
           : undefined;
-    lines.push(
-      `- 最近一次(assistant): input=${formatNumber(lastTokens?.input ?? 0)} output=${formatNumber(lastTokens?.output ?? 0)} reasoning=${formatNumber(lastTokens?.reasoning ?? 0)} cost=${formatUsd(cost)} at=${safeDateTime(atMs)}`,
-    );
+    lines.push(t("commands.contextLast", {
+      input: formatNumber(lastTokens?.input ?? 0),
+      output: formatNumber(lastTokens?.output ?? 0),
+      reasoning: formatNumber(lastTokens?.reasoning ?? 0),
+      cost: formatUsd(cost),
+      at: safeDateTime(atMs),
+    }));
     if (ratio !== null) {
-      lines.push(`- 最近一次上下文占用: ${(ratio * 100).toFixed(1)}%`);
+      lines.push(t("commands.contextLastContext", { value: (ratio * 100).toFixed(1) }));
     }
   } else {
-    lines.push("- 最近一次(assistant): -");
+    lines.push(t("commands.contextLastEmpty"));
   }
 
   await sendReply(provider, message, lines.join("\n"));

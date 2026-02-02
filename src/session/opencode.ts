@@ -15,6 +15,7 @@ import {
   upsertQuestionRequest,
   upsertToolRun,
 } from "../database.js";
+import { t } from "../i18n/index.js";
 import { OpenCodeApiError } from "../errors.js";
 import { initializeOpencodeForDirectory } from "../opencode.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
@@ -308,7 +309,7 @@ async function uploadToolAttachments(
       await sendReply(
         provider,
         message,
-        `⚠️ 输出过长，附件上传失败，已省略：${attachment.fileName}`,
+        t("opencode.outputTooLong", { fileName: attachment.fileName }),
       );
       continue;
     }
@@ -421,7 +422,7 @@ function extractQuestionSpecs(result: unknown): QuestionSpec[] {
       specs.push({
         requestId,
         questionIndex: localIndex,
-        title: header || "请选择",
+        title: header || t("opencode.questionTitleDefault"),
         question,
         options,
         multiple,
@@ -459,7 +460,7 @@ function normalizeQuestionInputs(raw: unknown): QuestionRequestSpec | null {
     const multiple = typeof entry.multiple === "boolean" ? entry.multiple : undefined;
     questions.push({
       question,
-      header: header || "请选择",
+      header: header || t("opencode.questionTitleDefault"),
       options,
       multiple,
     });
@@ -567,14 +568,16 @@ async function sendQuestionCardsFromRequest(
   const messageId = await feishuClient.replyQuestionCardWithId(
     options.message.messageId,
     {
-      title: question.header || "请选择",
+      title: question.header || t("opencode.questionTitleDefault"),
       questionId: request.requestId,
       questionText: question.question,
       options: question.options,
       questionIndex: 0,
       totalQuestions: request.questions.length,
       selectedLabels: [],
-      nextLabel: request.questions.length <= 1 ? "提交" : "下一步",
+      nextLabel: request.questions.length <= 1
+        ? t("opencode.submitLabelDefault")
+        : t("opencode.nextLabelDefault"),
     },
     { replyInThread },
   );
@@ -807,11 +810,11 @@ export async function resolveSessionId(
   const sessionTitle =
     prompt.length > 80 ? `${prompt.slice(0, 77)}...` : prompt;
   const sessionResponse = await getClient().session.create({
-    body: { title: sessionTitle || "飞书会话" },
+    body: { title: sessionTitle || t("opencode.sessionTitleDefault") },
     query: { directory },
   });
   if (!sessionResponse.data?.id) {
-    throw new Error("创建会话失败");
+    throw new Error(t("opencode.createSessionFailed"));
   }
 
   setThreadSession(threadId, sessionResponse.data.id);
@@ -872,7 +875,7 @@ export async function sendPrompt({
 
   const existing = activeRequests.get(message.threadId);
   if (existing && existing.sessionId === sessionId) {
-    existing.controller.abort(new Error("新请求已启动"));
+    existing.controller.abort(new Error(t("opencode.newRequestStarted")));
     try {
       await getClient().session.abort({
         path: { id: sessionId },
@@ -909,7 +912,7 @@ export async function sendPrompt({
       await sendReply(
         provider,
         message,
-        "✗ 未连接 AI 提供商。请在 OpenCode 中使用 /connect 配置提供商。",
+        t("opencode.providerMissing"),
       );
       return;
     }
@@ -1121,7 +1124,7 @@ export async function sendPrompt({
     if (isHeadersTimeout(cause) || described.summary.includes("HeadersTimeoutError")) {
       logWith(
         logger,
-        "OpenCode 请求超时，可能在等待审批；请在 OpenCode 侧确认并放行该请求。",
+        t("opencode.requestTimeout"),
         "warn",
       );
     }

@@ -2,6 +2,7 @@ import {
   getChannelModel,
   setChannelModel,
 } from "../../database.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import type { CommandHandler } from "./shared.js";
 
@@ -14,12 +15,12 @@ export const handleChannelModel: CommandHandler = async (message, command, optio
     await sendReply(
       provider,
       message,
-      `当前频道模型：${currentModel || "-"}`,
+      t("commands.channelModelCurrent", { model: currentModel || "-" }),
     );
     return true;
   }
 
   setChannelModel(message.channelId, arg);
-  await sendReply(provider, message, `✅ 频道模型已设置为 ${arg}`);
+  await sendReply(provider, message, t("commands.channelModelSet", { model: arg }));
   return true;
 };

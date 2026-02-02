@@ -1,4 +1,5 @@
 import type { SessionHandlerOptions } from "./session-handler.js";
+import { t } from "../i18n/index.js";
 import { OpenCodeApiError } from "../errors.js";
 
 export function logWith(
@@ -94,11 +95,11 @@ export function toUserErrorMessage(error: unknown): string {
 export function inferNetworkHintFromCause(cause: unknown): string {
   const text = describeCause(cause);
   const upper = text.toUpperCase();
-  if (upper.includes("ECONNREFUSED")) return "连接被拒绝：本机端口未监听/进程未启动";
-  if (upper.includes("ENOTFOUND")) return "DNS 解析失败：域名无法解析";
-  if (upper.includes("ECONNRESET")) return "连接被重置：对端/代理中断连接";
-  if (upper.includes("ETIMEDOUT") || upper.includes("TIMEOUT")) return "连接超时：网络不通/代理/防火墙";
-  if (upper.includes("CERT") || upper.includes("TLS")) return "TLS/证书校验失败：企业代理/根证书未注入";
+  if (upper.includes("ECONNREFUSED")) return t("utils.connRefused");
+  if (upper.includes("ENOTFOUND")) return t("utils.dnsFailed");
+  if (upper.includes("ECONNRESET")) return t("utils.connReset");
+  if (upper.includes("ETIMEDOUT") || upper.includes("TIMEOUT")) return t("utils.timeout");
+  if (upper.includes("CERT") || upper.includes("TLS")) return t("utils.tlsFailed");
   return "";
 }
 
@@ -120,17 +121,17 @@ export function buildFailureReport(params: {
   const hint = inferNetworkHintFromCause(cause);
 
   const lines: string[] = [];
-  lines.push("失败诊断");
-  lines.push(`- 操作: ${operation}`);
-  lines.push(`- 目录: ${directory}`);
-  lines.push(`- 线程: ${threadId}`);
-  if (sessionId) lines.push(`- 会话: ${sessionId}`);
+  lines.push(t("utils.failureDiag"));
+  lines.push(t("utils.operation", { operation }));
+  lines.push(t("utils.directory", { directory }));
+  lines.push(t("utils.thread", { threadId }));
+  if (sessionId) lines.push(t("utils.session", { sessionId }));
 
   if (error instanceof OpenCodeApiError) {
     const compact = compactOpenCodeApiErrorDetails(error.details);
     lines.push(`- OpenCode API: ${error.status}${compact ? ` ${compact}` : ""}`);
   } else {
-    lines.push(`- 错误: ${described.summary}`);
+    lines.push(t("utils.error", { summary: described.summary }));
   }
 
   const causeText = describeCause(cause);
@@ -138,7 +139,7 @@ export function buildFailureReport(params: {
     lines.push(`- cause: ${causeText}`);
   }
   if (hint) {
-    lines.push(`- 可能原因: ${hint}`);
+    lines.push(t("utils.hint", { hint }));
   }
 
   return lines.join("\n");
