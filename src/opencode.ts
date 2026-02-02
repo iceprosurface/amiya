@@ -134,7 +134,7 @@ export async function initializeOpencodeForDirectory(
     lsp: false,
     formatter: false,
     permission: {
-      edit: 'allow',
+      edit: 'ask',
       bash: 'allow',
       webfetch: 'allow',
     },

@@ -1,17 +1,22 @@
 import type { Config } from "@opencode-ai/sdk";
-import type { IncomingMessage, MessageProvider } from "../types.js";
-import { getChannelDirectory, getThreadMentionRequired, isUserInWhitelist } from "../database.js";
-import { handleCardAction, handleUserNotWhitelisted } from "./approval.js";
-import { parseCommand, handleCommand, isBotMentioned } from "./commands.js";
-import { flushQueue } from "./queue.js";
-import { sendPrompt } from "./opencode.js";
-import { activeRequests, messageQueue, pendingQuestions, pendingPermissions } from "./state.js";
-import type { PendingQuestion } from "./state.js";
-import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
-import { sendReply } from "./messaging.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
+import type { IncomingMessage, MessageProvider } from "../types.js";
+import type { PendingQuestion } from "./state.js";
+import {
+  deleteQuestionRequest,
+  getChannelDirectory,
+  getQuestionRequest,
+  getThreadMentionRequired,
+  isUserInWhitelist,
+} from "../database.js";
 import { getOpencodeClientV2 } from "../opencode.js";
-import { deleteQuestionRequest, getQuestionRequest } from "../database.js";
+import { handleCardAction, handleUserNotWhitelisted } from "./approval.js";
+import { handleCommand, isBotMentioned, parseCommand } from "./commands/index.js";
+import { sendReply } from "./messaging.js";
+import { sendPrompt } from "./opencode.js";
+import { flushQueue } from "./queue.js";
+import { activeRequests, messageQueue, pendingPermissions, pendingQuestions } from "./state.js";
+import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
 
 export type SessionHandlerOptions = {
   provider: MessageProvider;
@@ -238,8 +243,10 @@ export async function handleIncomingMessage(
           requestID: pending.requestId,
           answers,
         });
-        pendingQuestions.delete(questionId!);
-        deleteQuestionRequest(questionId!);
+        if (questionId) {
+          pendingQuestions.delete(questionId);
+          deleteQuestionRequest(questionId);
+        }
         await updateQuestionCard(pending, cardMessageId, true);
         logWith(options.logger, `Question reply submitted ${questionId}`, "info");
       } catch (error) {
