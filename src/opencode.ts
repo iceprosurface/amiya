@@ -23,6 +23,7 @@ const opencodeServers = new Map<
 >()
 
 const serverRetryCount = new Map<string, number>()
+let isShuttingDown = false
 
 async function getOpenPort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -126,6 +127,7 @@ export async function initializeOpencodeForDirectory(
     return new DirectoryNotAccessibleError(directory)
   }
 
+
   const port = await getOpenPort()
 
   const opencodeCommand = process.env.OPENCODE_PATH || 'opencode'
@@ -165,11 +167,11 @@ export async function initializeOpencodeForDirectory(
 
   serverProcess.on('exit', (code) => {
     opencodeServers.delete(directory)
-    if (code !== 0) {
+    if (code !== 0 && !isShuttingDown) {
       const retryCount = serverRetryCount.get(directory) || 0
       if (retryCount < 5) {
         serverRetryCount.set(directory, retryCount + 1)
-        initializeOpencodeForDirectory(directory, config).catch(() => {})
+        initializeOpencodeForDirectory(directory, config).catch(() => { })
       } else {
         serverRetryCount.delete(directory)
       }
@@ -247,4 +249,15 @@ export async function restartOpencodeServer(directory: string, config?: Config):
     return result
   }
   return true
+}
+
+export function shutdownOpencodeServers() {
+  isShuttingDown = true
+  for (const [directory, entry] of opencodeServers) {
+    serverRetryCount.set(directory, 999)
+    if (!entry.process.killed) {
+      entry.process.kill('SIGTERM')
+    }
+  }
+  opencodeServers.clear()
 }

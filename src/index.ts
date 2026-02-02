@@ -10,6 +10,7 @@ import {
 } from "./providers/feishu/feishu-config.js";
 import { createFeishuProvider } from "./providers/feishu/feishu-provider.js";
 import { acquireSingleInstanceLock } from "./runtime/single-instance-lock.js";
+import { shutdownOpencodeServers } from "./opencode.js";
 import { handleIncomingMessage } from "./session/session-handler.js";
 import { getRuntimeVersion } from "./version.js";
 
@@ -133,6 +134,12 @@ export async function startAmiya(targetDir: string) {
       logger.info("提供商已停止");
     } catch (e) {
       logger.error(`停止提供商失败：${e}`);
+    }
+    try {
+      shutdownOpencodeServers();
+      logger.info("OpenCode servers stopped");
+    } catch (e) {
+      logger.error(`停止OpenCode服务器失败：${e}`);
     }
     try {
       lockRelease?.();
