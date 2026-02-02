@@ -110,13 +110,16 @@ export async function buildFooter(
   let percentText = "";
   try {
     const limit = await getModelLimit(options.getClient, options.directory, options.model);
-    if (limit?.context) {
-      const tokens = info ? readTokensFromAssistantMessage(info) : undefined;
-      const totalTokens = tokens
-        ? tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
-        : 0;
-      if (totalTokens > 0) {
+    const tokens = info ? readTokensFromAssistantMessage(info) : undefined;
+    const totalTokens = tokens
+      ? tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+      : 0;
+
+    if (totalTokens > 0) {
+      if (limit?.context) {
         percentText = formatPercentRatio(totalTokens / limit.context);
+      } else {
+        percentText = `${(totalTokens / 1000).toFixed(1)}k`;
       }
     }
   } catch {
