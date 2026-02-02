@@ -776,6 +776,9 @@ export async function sendPrompt({
             logWith(logger, "Permission request ignored: invalid payload", "debug");
             return;
           }
+          if (streamSink && typeof streamSink.detach === "function") {
+            streamSink.detach();
+          }
           const dedupeKey = buildPermissionDedupeKey(normalized, directory);
           const existing = Array.from(pendingPermissions.values()).find(
             (pending) => pending.dedupeKey === dedupeKey,
