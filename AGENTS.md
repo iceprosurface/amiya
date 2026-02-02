@@ -26,8 +26,10 @@
 - If adding tests, place them under `src/` or a new `tests/` directory and document the command in `package.json`.
 
 ## Commit & Pull Request Guidelines
-- No commit history exists yet, so there is no established convention.
-- Use clear, imperative commit subjects (e.g., "Add feishu streaming config").
+- Commit message format: `type(scope): description`.
+- Allowed `type`: `fix`, `feat`, `refactor`, `perf`, `docs`, `types`.
+- Use a short lowercase `scope` that matches the touched area (e.g., `session`, `feishu`, `config`).
+- Keep `description` concise and imperative.
 - PRs should include: a short summary, test/verification steps, and any config changes or `.amiya` implications.
 
 ## Security & Configuration Tips
