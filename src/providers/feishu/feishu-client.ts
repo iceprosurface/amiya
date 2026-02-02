@@ -21,6 +21,99 @@ export function createFeishuClient(
     }
   }
 
+  let cachedBotUserId: string | null = null
+
+  async function getBotUserId(): Promise<string | null> {
+    if (cachedBotUserId) {
+      return cachedBotUserId
+    }
+
+    if (config.botUserId) {
+      cachedBotUserId = config.botUserId
+      log('Using configured botUserId', 'debug')
+      return cachedBotUserId
+    }
+
+    try {
+      const extractTenantToken = (result: unknown): string | null => {
+        if (!result || typeof result !== 'object') return null
+        const record = result as Record<string, unknown>
+        const data = record.data as Record<string, unknown> | undefined
+        const directToken = record.tenant_access_token
+        const nestedToken = data?.tenant_access_token
+        const resolved = typeof nestedToken === 'string' && nestedToken.length > 0
+          ? nestedToken
+          : typeof directToken === 'string' && directToken.length > 0
+            ? directToken
+            : null
+        return resolved
+      }
+
+      const tokenResult = await client.auth.v3.tenantAccessToken.internal({
+        data: {
+          app_id: config.appId,
+          app_secret: config.appSecret,
+        },
+      })
+
+      let tenantToken = extractTenantToken(tokenResult)
+      if (!tenantToken) {
+        const directTokenResult = await client.request({
+          method: 'POST',
+          url: '/open-apis/auth/v3/tenant_access_token/internal',
+          data: {
+            app_id: config.appId,
+            app_secret: config.appSecret,
+          },
+        })
+        tenantToken = extractTenantToken(directTokenResult)
+      }
+
+      if (!tenantToken) {
+        log('No tenant_access_token in response', 'warn')
+        return null
+      }
+
+      const botInfoResult = await client.request({
+        method: 'GET',
+        url: '/open-apis/bot/v3/info',
+      }, lark.withTenantToken(tenantToken))
+
+      if (!botInfoResult || typeof botInfoResult !== 'object') {
+        log('Invalid bot info response', 'warn')
+        return null
+      }
+
+      const botInfoRecord = botInfoResult as Record<string, unknown>
+      const botInfoData = botInfoRecord.data as Record<string, unknown> | undefined
+      const bot = (botInfoData?.bot as Record<string, unknown> | undefined)
+        ?? (botInfoRecord.bot as Record<string, unknown> | undefined)
+      const openId = bot?.open_id ?? botInfoData?.open_id ?? botInfoRecord.open_id
+      const userId = bot?.user_id ?? botInfoData?.user_id ?? botInfoRecord.user_id
+      log(
+        `Bot info response keys: top=[${Object.keys(botInfoRecord).join(',')}] data=[${botInfoData ? Object.keys(botInfoData).join(',') : ''}] bot=[${bot ? Object.keys(bot).join(',') : ''}]`,
+        'debug',
+      )
+      const resolvedId = typeof openId === 'string' && openId.length > 0
+        ? openId
+        : typeof userId === 'string' && userId.length > 0
+          ? userId
+          : null
+
+      if (resolvedId) {
+        cachedBotUserId = resolvedId
+        log(`Auto-detected botUserId: ${resolvedId}`, 'info')
+        return cachedBotUserId
+      }
+
+      log('Bot open_id/user_id not found in bot info response', 'warn')
+      return null
+    } catch (error) {
+      log(`Failed to fetch botUserId: ${error}`, 'warn')
+      return null
+    }
+  }
+
   function extractMessageId(result: unknown): string | null {
     if (!result || typeof result !== 'object') return null
     const r = result as Record<string, unknown>
@@ -168,7 +261,7 @@ export function createFeishuClient(
       },
     }
     if (isLast) {
-      nextButton['type'] = 'primary'
+      nextButton.type = 'primary'
     }
 
     const navActions = [
@@ -551,6 +644,10 @@ export function createFeishuClient(
         log(`Add reaction failed: ${error}`, 'error')
         return false
       }
+    },
+
+    async getBotUserId(): Promise<string | null> {
+      return await getBotUserId()
     },
 
     getRawClient() {

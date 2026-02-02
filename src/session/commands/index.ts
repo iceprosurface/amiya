@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "../../types.js";
 import type { SessionHandlerOptions } from "../session-handler.js";
-import type { Command, CommandHandler } from "./shared.js";
+import { logWith } from "../utils.js";
 import { handleAbort } from "./abort.js";
 import { handleAgent } from "./agent.js";
 import { handleCompact } from "./compact.js";
@@ -13,8 +13,8 @@ import { handleNewSession } from "./new-session.js";
 import { handleProject } from "./project.js";
 import { handleQueue } from "./queue.js";
 import { handleResume } from "./resume.js";
+import type { Command, CommandHandler } from "./shared.js";
 import { handleUpdateDeploy } from "./update-deploy.js";
-export { isBotMentioned } from "./shared.js";
 
 const handlers: Record<string, CommandHandler> = {
   "new-session": handleNewSession,
@@ -51,5 +51,27 @@ export async function handleCommand(
 ): Promise<boolean> {
   const handler = handlers[command.name];
   if (!handler) return false;
-  return handler(message, command, options);
+  const argsText = command.args.length > 0 ? command.args.join(" ") : "-";
+  logWith(
+    options.logger,
+    `Command start name=${command.name} args=${argsText} thread=${message.threadId} channel=${message.channelId}`,
+    "info",
+  );
+  try {
+    const handled = await handler(message, command, options);
+    logWith(
+      options.logger,
+      `Command end name=${command.name} handled=${handled}`,
+      "info",
+    );
+    return handled;
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    logWith(
+      options.logger,
+      `Command error name=${command.name} error=${messageText}`,
+      "error",
+    );
+    throw error;
+  }
 }

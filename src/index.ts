@@ -3,16 +3,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { setDataDir } from "./config.js";
-import { handleIncomingMessage } from "./session/session-handler.js";
-import { setupLogger, defaultLogger } from "./logger/index.js";
-import { acquireSingleInstanceLock } from "./runtime/single-instance-lock.js";
-import { createFeishuProvider } from "./providers/feishu/feishu-provider.js";
-import { getRuntimeVersion } from "./version.js";
+import { defaultLogger, setupLogger } from "./logger/index.js";
 import {
-  type FeishuConfig,
   validateConfig,
+  type FeishuConfig,
 } from "./providers/feishu/feishu-config.js";
+import { createFeishuProvider } from "./providers/feishu/feishu-provider.js";
+import { acquireSingleInstanceLock } from "./runtime/single-instance-lock.js";
+import { handleIncomingMessage } from "./session/session-handler.js";
 import type { MessageProvider } from "./types.js";
+import { getRuntimeVersion } from "./version.js";
 
 export async function startAmiya(targetDir: string) {
   const logger = setupLogger(targetDir);
@@ -63,6 +63,21 @@ export async function startAmiya(targetDir: string) {
       logger.log({ level: level || "info", message: msg }),
   });
 
+  let botUserId = config.botUserId;
+  if (!botUserId && typeof provider.getBotUserId === 'function') {
+    try {
+      const detectedBotUserId = await provider.getBotUserId();
+      if (detectedBotUserId) {
+        botUserId = detectedBotUserId;
+        logger.info(`Auto-detected botUserId: ${botUserId}`);
+      } else {
+        logger.warn('Failed to auto-detect botUserId from API');
+      }
+    } catch (error) {
+      logger.warn(`Auto-detection of botUserId failed: ${error}`);
+    }
+  }
+
   const opencodeConfig = config.model ? { model: config.model } : undefined;
 
   provider.onMessage(async (message, extra) => {
@@ -75,26 +90,23 @@ export async function startAmiya(targetDir: string) {
       streaming: config.streaming,
       requireUserWhitelist: config.requireUserWhitelist,
       adminUserIds: config.adminUserIds,
-      botUserId: config.botUserId,
+      botUserId: botUserId,
       adminChatId: config.adminChatId
         ?? (config.allowedChatIds && config.allowedChatIds.length > 0 ? config.allowedChatIds[0] : undefined),
       sendApprovalCard: (adminChatId: string, params: { requestId: string; channelId: string; userId: string; userName?: string }) => {
-        const providerWithClient = provider as MessageProvider & { getFeishuClient?: () => Record<string, unknown> | null };
-        const client = providerWithClient.getFeishuClient?.();
+        const client = provider.getFeishuClient?.();
         if (!client || typeof client.sendApprovalCard !== 'function') return Promise.resolve(null);
-        return client.sendApprovalCard(adminChatId, params) as Promise<string | null>;
+        return client.sendApprovalCard(adminChatId, params);
       },
       sendApprovalCardInThread: (messageId: string, params: { requestId: string; channelId: string; userId: string; userName?: string }) => {
-        const providerWithClient = provider as MessageProvider & { getFeishuClient?: () => Record<string, unknown> | null };
-        const client = providerWithClient.getFeishuClient?.();
+        const client = provider.getFeishuClient?.();
         if (!client || typeof client.replyApprovalCardWithId !== 'function') return Promise.resolve(null);
-        return client.replyApprovalCardWithId(messageId, params, { replyInThread: true }) as Promise<string | null>;
+        return client.replyApprovalCardWithId(messageId, params, { replyInThread: true });
       },
       updateApprovalCard: (messageId: string, status: 'approved' | 'rejected', actionBy: string) => {
-        const providerWithClient = provider as MessageProvider & { getFeishuClient?: () => Record<string, unknown> | null };
-        const client = providerWithClient.getFeishuClient?.();
+        const client = provider.getFeishuClient?.();
         if (!client || typeof client.updateApprovalCard !== 'function') return Promise.resolve(false);
-        return client.updateApprovalCard(messageId, status, actionBy) as Promise<boolean>;
+        return client.updateApprovalCard(messageId, status, actionBy);
       },
       isCardAction: extra?.isCardAction,
       cardActionData: extra?.cardActionData,

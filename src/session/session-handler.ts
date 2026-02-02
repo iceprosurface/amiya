@@ -1,7 +1,4 @@
 import type { Config } from "@opencode-ai/sdk";
-import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
-import type { IncomingMessage, MessageProvider } from "../types.js";
-import type { PendingQuestion } from "./state.js";
 import {
   deleteQuestionRequest,
   getChannelDirectory,
@@ -10,12 +7,21 @@ import {
   isUserInWhitelist,
 } from "../database.js";
 import { getOpencodeClientV2 } from "../opencode.js";
+import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
+import type { IncomingMessage, MessageProvider } from "../types.js";
 import { handleCardAction, handleUserNotWhitelisted } from "./approval.js";
-import { handleCommand, isBotMentioned, parseCommand } from "./commands/index.js";
+import { handleCommand, parseCommand } from "./commands/index.js";
+import { isBotMentioned } from "./commands/shared.js";
 import { sendReply } from "./messaging.js";
 import { sendPrompt } from "./opencode.js";
 import { flushQueue } from "./queue.js";
-import { activeRequests, messageQueue, pendingPermissions, pendingQuestions } from "./state.js";
+import {
+  activeRequests,
+  messageQueue,
+  pendingPermissions,
+  pendingQuestions,
+} from "./state.js";
+import type { PendingQuestion } from "./state.js";
 import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
 
 export type SessionHandlerOptions = {

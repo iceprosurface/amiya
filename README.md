@@ -85,7 +85,7 @@ pnpm install
 说明：
 - `adminUserIds` 为空不会触发额外权限，当前实现仅做简单允许列表过滤。
 - `adminChatId` 用于审批卡片投递的管理员群（可不填）。
-- `botUserId` 用于识别是否 @ 机器人（thread 的 /mention-required 需要）。
+- `botUserId` 用于识别是否 @ 机器人（thread 的 /mention-required 需要）；为空时会尝试自动获取，失败时需手动配置。
 - `allowedChatIds` 为空表示不限制群聊。
 - `requireUserWhitelist` 为 true 时，仅允许 `adminUserIds` 白名单用户触发消息处理。
 - `model` 会作为 OpenCode 默认模型（可被 /model 覆盖）。

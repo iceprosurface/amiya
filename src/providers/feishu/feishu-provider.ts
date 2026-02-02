@@ -285,5 +285,8 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     getFeishuClient() {
       return feishuClient
     },
+    async getBotUserId(): Promise<string | null> {
+      return await feishuClient.getBotUserId()
+    },
   }
 }

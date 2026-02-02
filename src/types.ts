@@ -41,5 +41,66 @@ export interface MessageProvider {
   replyMessage?(message: IncomingMessage, messageOut: OutgoingMessage): Promise<{ messageId: string }>
   updateMessage?(messageId: string, messageOut: OutgoingMessage): Promise<boolean>
   addReaction?(messageId: string, emoji: string): Promise<boolean>
-  getFeishuClient?(): any
+  getFeishuClient?(): FeishuCardClient | null
+  getBotUserId?(): Promise<string | null>
+}
+
+export type FeishuCardClient = {
+  sendApprovalCard?: (
+    adminChatId: string,
+    params: { requestId: string; channelId: string; userId: string; userName?: string },
+  ) => Promise<string | null>
+  replyApprovalCardWithId?: (
+    messageId: string,
+    params: { requestId: string; channelId: string; userId: string; userName?: string },
+    options?: { replyInThread?: boolean },
+  ) => Promise<string | null>
+  updateApprovalCard?: (
+    messageId: string,
+    status: 'approved' | 'rejected',
+    actionBy: string,
+  ) => Promise<boolean>
+  replyPermissionCardWithId?: (
+    messageId: string,
+    params: { requestId: string; permission: string; patterns: string[] },
+    options?: { replyInThread?: boolean },
+  ) => Promise<string | null>
+  replyQuestionCardWithId?: (
+    messageId: string,
+    params: {
+      title: string
+      questionId: string
+      questionText: string
+      options: Array<{ label: string; description?: string }>
+      questionIndex: number
+      totalQuestions: number
+      selectedLabels?: string[]
+      nextLabel?: string
+    },
+    options?: { replyInThread?: boolean },
+  ) => Promise<string | null>
+  updatePermissionCardWithId?: (
+    messageId: string,
+    params: {
+      requestId: string
+      permission: string
+      patterns: string[]
+      status: 'approved' | 'rejected'
+      replyLabel?: string
+    },
+  ) => Promise<boolean>
+  updateQuestionCardWithId?: (
+    messageId: string,
+    params: {
+      title: string
+      questionId: string
+      questionText: string
+      options: Array<{ label: string; description?: string }>
+      questionIndex: number
+      totalQuestions: number
+      selectedLabels?: string[]
+      nextLabel?: string
+      completed?: boolean
+    },
+  ) => Promise<boolean>
 }

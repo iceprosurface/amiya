@@ -23,6 +23,28 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
   let updateCount = 0
   let lastRenderedText = ""
 
+  const logChunkStats = (stage: string, chunks: string[]) => {
+    if (!logger) return
+    const count = chunks.length
+    if (count === 0) {
+      logWith(logger, `Stream ${stage}: chunks=0`, "debug")
+      return
+    }
+    let total = 0
+    let max = 0
+    for (const chunk of chunks) {
+      const size = chunk.length
+      total += size
+      if (size > max) max = size
+    }
+    const avg = Math.round(total / count)
+    logWith(
+      logger,
+      `Stream ${stage}: chunks=${count} totalChars=${total} maxChunk=${max} avgChunk=${avg}`,
+      "debug",
+    )
+  }
+
   const sendNewMessage = async (text: string): Promise<string> => {
     if (provider.replyMessage) {
       const result = await provider.replyMessage(message, { text })
@@ -39,6 +61,11 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
     if (!currentMessageId || !provider.updateMessage) return false
     if (updateCount >= options.maxUpdateCount) {
       mode = "append"
+      logWith(
+        logger,
+        `Stream update limit reached maxUpdateCount=${options.maxUpdateCount}; switching to append`,
+        "debug",
+      )
       return false
     }
     const ok = await provider.updateMessage(currentMessageId, { text })
@@ -46,6 +73,11 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
       updateCount += 1
     } else {
       mode = "append"
+      logWith(
+        logger,
+        `Stream update failed messageId=${currentMessageId}; switching to append`,
+        "debug",
+      )
     }
     return ok
   }
@@ -53,6 +85,8 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
   const appendDelta = async (text: string) => {
     if (!text) return
     const chunks = splitMarkdownIntoChunks(text, options.maxMessageChars)
+    logWith(logger, `Stream appendDelta: deltaChars=${text.length}`, "debug")
+    logChunkStats("appendDelta", chunks)
     for (const chunk of chunks) {
       const id = await sendNewMessage(chunk)
       messageIds.push(id)
@@ -69,12 +103,23 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
         lastRenderedText && text.startsWith(lastRenderedText)
           ? text.slice(lastRenderedText.length)
           : text
+      logWith(
+        logger,
+        `Stream render append: totalChars=${text.length} deltaChars=${delta.length}`,
+        "debug",
+      )
       await appendDelta(delta)
       lastRenderedText = text
       return
     }
 
     const chunks = splitMarkdownIntoChunks(text, options.maxMessageChars)
+    logWith(
+      logger,
+      `Stream render update: totalChars=${text.length} messages=${messageIds.length}`,
+      "debug",
+    )
+    logChunkStats("render", chunks)
     if (chunks.length === 0) return
 
     if (!currentMessageId) {
@@ -94,6 +139,11 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
             lastRenderedText && text.startsWith(lastRenderedText)
               ? text.slice(lastRenderedText.length)
               : text
+          logWith(
+            logger,
+            `Stream update fallback: totalChars=${text.length} deltaChars=${delta.length}`,
+            "debug",
+          )
           await appendDelta(delta)
           lastRenderedText = text
           return
@@ -113,6 +163,11 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
           lastRenderedText && text.startsWith(lastRenderedText)
             ? text.slice(lastRenderedText.length)
             : text
+        logWith(
+          logger,
+          `Stream update fallback: totalChars=${text.length} deltaChars=${delta.length}`,
+          "debug",
+        )
         await appendDelta(delta)
         lastRenderedText = text
         return
@@ -153,12 +208,23 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
           lastRenderedText && combined.startsWith(lastRenderedText)
             ? combined.slice(lastRenderedText.length)
             : combined
+        logWith(
+          logger,
+          `Stream finalize append: totalChars=${combined.length} deltaChars=${delta.length}`,
+          "debug",
+        )
         await appendDelta(delta)
         lastRenderedText = combined
         return
       }
 
       const chunks = splitMarkdownIntoChunks(combined, options.maxMessageChars)
+      logWith(
+        logger,
+        `Stream finalize update: totalChars=${combined.length} messages=${messageIds.length}`,
+        "debug",
+      )
+      logChunkStats("finalize", chunks)
       if (chunks.length === 0) return
 
       const existingCount = messageIds.length

@@ -151,6 +151,12 @@ export async function createStreamingController(
         return
       }
 
+      logWith(
+        options.logger,
+        `Stream message.updated session=${info.sessionID || "-"} message=${info.id || "-"} role=${info.role || "-"} created=${info.time?.created ?? "-"} completed=${info.time?.completed ?? "-"}`,
+        "debug",
+      )
+
       if (info.id) {
         messageMeta.set(info.id, {
           role: info.role,
@@ -163,6 +169,11 @@ export async function createStreamingController(
         if (!assistantMessageId) {
           if (shouldAcceptAssistant(createdAt)) {
             assistantMessageId = info.id || null
+            logWith(
+              options.logger,
+              `Stream assistant message selected id=${assistantMessageId || "-"} created=${createdAt ?? "-"}`,
+              "debug",
+            )
             await updateTextCache()
           } else {
             return
@@ -182,6 +193,15 @@ export async function createStreamingController(
       const messageId = part.messageID
       const partId = part.id
       if (!messageId || !partId) return
+
+      const deltaSize =
+        typeof event.properties?.delta === "string" ? event.properties.delta.length : 0
+      const partTextSize = typeof part.text === "string" ? part.text.length : 0
+      logWith(
+        options.logger,
+        `Stream part.updated session=${part.sessionID || "-"} message=${messageId} part=${partId} type=${part.type || "-"} deltaChars=${deltaSize} textChars=${partTextSize}`,
+        "debug",
+      )
 
       const meta = messageMeta.get(messageId)
       if (meta?.role && meta.role !== "assistant") {
