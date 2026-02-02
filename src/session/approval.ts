@@ -6,6 +6,7 @@ import {
   approveRequest,
   rejectRequest,
 } from "../database.js";
+import { t } from "../i18n/index.js";
 import { sendReply } from "./messaging.js";
 import { logWith } from "./utils.js";
 
@@ -22,7 +23,7 @@ export async function handleUserNotWhitelisted(
     await sendReply(
       options.provider,
       message,
-      "❌ 您暂无此频道的访问权限，请联系管理员。",
+      t("approval.notAllowed"),
     );
     return;
   }
@@ -44,7 +45,7 @@ export async function handleUserNotWhitelisted(
   }
 
   if (!cardMessageId) {
-    await sendReply(options.provider, message, "❌ 提交访问请求失败，请联系管理员。");
+    await sendReply(options.provider, message, t("approval.submitFailed"));
     return;
   }
 
@@ -60,7 +61,7 @@ export async function handleUserNotWhitelisted(
   await sendReply(
     options.provider,
     message,
-    "✅ 已提交访问请求，等待管理员审批。",
+    t("approval.submitted"),
   );
 }
 
@@ -71,7 +72,7 @@ export async function handleCardAction(
   const { adminUserIds, updateApprovalCard, cardActionData } = options;
 
   if (!cardActionData) {
-    await sendReply(options.provider, message, "❌ 无效的卡片操作。");
+    await sendReply(options.provider, message, t("approval.invalidAction"));
     return;
   }
 
@@ -81,18 +82,22 @@ export async function handleCardAction(
       `Non-admin user ${message.userId} attempted card action for request ${cardActionData.requestId}`,
       "warn",
     );
-    await sendReply(options.provider, message, "❌ 只有管理员可以操作审批。");
+    await sendReply(options.provider, message, t("approval.adminOnly"));
     return;
   }
 
   const request = getApprovalRequest(cardActionData.requestId);
   if (!request) {
-    await sendReply(options.provider, message, "❌ 审批请求不存在或已过期。");
+    await sendReply(options.provider, message, t("approval.requestMissing"));
     return;
   }
 
   if (request.status !== "pending") {
-    await sendReply(options.provider, message, `❌ 该请求已被处理（${request.status}）。`);
+    await sendReply(
+      options.provider,
+      message,
+      t("approval.requestHandled", { status: request.status }),
+    );
     return;
   }
 
@@ -113,8 +118,8 @@ export async function handleCardAction(
 
   const notifyText =
     cardActionData.action === "approve"
-      ? `✅ 已批准用户 ${request.user_id} 的访问请求。`
-      : `❌ 已拒绝用户 ${request.user_id} 的访问请求。`;
+      ? t("approval.approved", { userId: request.user_id })
+      : t("approval.rejected", { userId: request.user_id });
 
   if (request.admin_chat_id) {
     await options.provider.sendMessage({ channelId: request.admin_chat_id }, { text: notifyText });

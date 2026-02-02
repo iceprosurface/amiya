@@ -2,7 +2,8 @@ import type { Logger } from "winston";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { setDataDir } from "./config.js";
+import { loadRuntimeConfig, setDataDir } from "./config.js";
+import { initI18n, t } from "./i18n/index.js";
 import { defaultLogger, setupLogger } from "./logger/index.js";
 import {
   validateConfig,
@@ -18,10 +19,16 @@ export async function startAmiya(targetDir: string) {
   const logger = setupLogger(targetDir);
   logger.info(`Amiya starting... target: ${targetDir}`);
 
+  setDataDir(join(targetDir, ".amiya"));
+  const runtimeConfig = loadRuntimeConfig((message, level) => {
+    logger.log({ level: level || "info", message });
+  });
+  initI18n(runtimeConfig.locale);
+
   const loaded = loadFeishuConfig(targetDir, logger);
   if (!loaded) {
-    logger.error("feishu.json 配置无效或缺失。");
-    logger.info("请在当前目录或 .amiya 下创建 feishu.json");
+    logger.error(t("index.feishuInvalid"));
+    logger.info(t("index.feishuHint"));
     process.exit(1);
   }
 
@@ -35,8 +42,6 @@ export async function startAmiya(targetDir: string) {
   } catch (err) {
     logger.warn(`Failed to chdir: ${err}`);
   }
-
-  setDataDir(join(targetDir, ".amiya"));
 
   const runtimeVersion = getRuntimeVersion();
   if (runtimeVersion) {
@@ -118,10 +123,10 @@ export async function startAmiya(targetDir: string) {
   });
 
   await provider.start();
-  logger.info("Amiya 已上线 ✅");
+  logger.info(t("index.online"));
 
   setInterval(() => {
-    logger.debug("Amiya 心跳检测");
+    logger.debug(t("index.heartbeat"));
   }, 60000);
 
   let cleaningUp = false;
@@ -131,15 +136,15 @@ export async function startAmiya(targetDir: string) {
     logger.info(`Signal ${signal}, cleaning up...`);
     try {
       await provider.stop();
-      logger.info("提供商已停止");
+      logger.info(t("index.providerStopped"));
     } catch (e) {
-      logger.error(`停止提供商失败：${e}`);
+      logger.error(t("index.providerStopFailed", { error: String(e) }));
     }
     try {
       shutdownOpencodeServers();
       logger.info("OpenCode servers stopped");
     } catch (e) {
-      logger.error(`停止OpenCode服务器失败：${e}`);
+      logger.error(t("index.serverStopFailed", { error: String(e) }));
     }
     try {
       lockRelease?.();

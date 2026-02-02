@@ -27,6 +27,7 @@
     "@opencode-ai/plugin": "latest",
     "@opencode-ai/sdk": "^1.1.39",
     "better-sqlite3": "^11.8.1",
+    "i18next": "^25.8.0",
     "pm2": "^6.0.14",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",

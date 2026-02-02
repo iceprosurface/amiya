@@ -1,4 +1,5 @@
 import type { OpencodeClient } from "@opencode-ai/sdk";
+import { t } from "../i18n/index.js";
 import { isRecord } from "./utils.js";
 import { getRuntimeVersion } from "../version.js";
 
@@ -127,19 +128,19 @@ export async function buildFooter(
   }
 
   const lines: string[] = [];
-  lines.push(`耗时 ${formatDurationSeconds(durationSeconds)}`);
+  lines.push(t("stats.duration", { value: formatDurationSeconds(durationSeconds) }));
   if (percentText) {
-    lines.push(`上下文 ${percentText}`);
+    lines.push(t("stats.context", { value: percentText }));
   }
   if (infoSessionId) {
-    lines.push(`会话 ${infoSessionId}`);
+    lines.push(t("stats.session", { value: infoSessionId }));
   }
   if (modelId) {
-    lines.push(`模型 ${modelId}`);
+    lines.push(t("stats.model", { value: modelId }));
   }
   const version = getRuntimeVersion();
   if (version) {
-    lines.push(`版本 ${version}`);
+    lines.push(t("stats.version", { value: version }));
   }
   return lines.join("\n");
 }

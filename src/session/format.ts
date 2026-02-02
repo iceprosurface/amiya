@@ -1,3 +1,4 @@
+import { t } from "../i18n/index.js";
 import { isRecord } from "./utils.js";
 
 const XML_OUTPUT_MAX_CHARS = 4000;
@@ -307,7 +308,7 @@ export function extractTextFromPromptResult(result: unknown): string {
           typeof part.description === "string" ? part.description : "";
         const agent = typeof part.agent === "string" ? part.agent : "";
         const prompt = typeof part.prompt === "string" ? part.prompt : "";
-        const label = description || prompt || "子任务";
+        const label = description || prompt || t("labels.subtask");
         const agentInfo = agent ? `（agent: ${agent}）` : "";
         subtaskLines.push(`- ${label}${agentInfo}`);
       } else if (type === "tool") {
@@ -389,17 +390,17 @@ export function extractTextFromPromptResult(result: unknown): string {
   if (text) sections.push(text);
 
   if (subtaskLines.length > 0) {
-    sections.push("— 子任务 —");
+    sections.push(t("markers.subtask"));
     sections.push(subtaskLines.join("\n"));
   }
 
   if (toolOutputs.length > 0) {
-    sections.push("— 子任务/工具输出 —");
+    sections.push(t("markers.toolOutput"));
     sections.push(toolOutputs.join("\n"));
   }
 
   if (hasReasoning) {
-    sections.unshift("— 思考中 —");
+    sections.unshift(t("markers.thinking"));
   }
   const xml = buildAmiyaXmlFromParts(parts);
   if (xml) sections.push(xml);
@@ -467,7 +468,7 @@ export function extractTextWithAttachmentsFromPromptResult(
           typeof part.description === "string" ? part.description : "";
         const agent = typeof part.agent === "string" ? part.agent : "";
         const prompt = typeof part.prompt === "string" ? part.prompt : "";
-        const label = description || prompt || "子任务";
+        const label = description || prompt || t("labels.subtask");
         const agentInfo = agent ? `（agent: ${agent}）` : "";
         subtaskLines.push(`- ${label}${agentInfo}`);
       } else if (type === "tool") {
@@ -498,7 +499,7 @@ export function extractTextWithAttachmentsFromPromptResult(
                   mimeType: "text/plain",
                 });
                 toolOutputs.push(
-                  `> [#${toolName}] 输出过长，已上传为附件：${fileName}`,
+                  `> [#${toolName}] ${t("opencode.outputTooLong", { fileName })}`,
                 );
                 const truncated = truncateForXml(output);
                 toolRuns.push({
@@ -566,17 +567,17 @@ export function extractTextWithAttachmentsFromPromptResult(
   if (text) sections.push(text);
 
   if (subtaskLines.length > 0) {
-    sections.push("— 子任务 —");
+    sections.push(t("markers.subtask"));
     sections.push(subtaskLines.join("\n"));
   }
 
   if (toolOutputs.length > 0) {
-    sections.push("— 子任务/工具输出 —");
+    sections.push(t("markers.toolOutput"));
     sections.push(toolOutputs.join("\n"));
   }
 
   if (hasReasoning) {
-    sections.unshift("— 思考中 —");
+    sections.unshift(t("markers.thinking"));
   }
   const xml = buildAmiyaXmlFromParts(parts);
   if (xml) sections.push(xml);
