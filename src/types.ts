@@ -46,6 +46,21 @@ export interface MessageProvider {
 }
 
 export type FeishuCardClient = {
+  uploadTextFile?: (params: {
+    content: string;
+    fileName: string;
+    fileType?: string;
+    mimeType?: string;
+  }) => Promise<string | null>
+  sendFileMessage?: (
+    chatId: string,
+    fileKey: string,
+  ) => Promise<string | null>
+  replyFileMessageWithId?: (
+    messageId: string,
+    fileKey: string,
+    options?: { replyInThread?: boolean },
+  ) => Promise<string | null>
   sendApprovalCard?: (
     adminChatId: string,
     params: { requestId: string; channelId: string; userId: string; userName?: string },

@@ -11,7 +11,6 @@ import {
 import { createFeishuProvider } from "./providers/feishu/feishu-provider.js";
 import { acquireSingleInstanceLock } from "./runtime/single-instance-lock.js";
 import { handleIncomingMessage } from "./session/session-handler.js";
-import type { MessageProvider } from "./types.js";
 import { getRuntimeVersion } from "./version.js";
 
 export async function startAmiya(targetDir: string) {
@@ -88,6 +87,7 @@ export async function startAmiya(targetDir: string) {
         logger.log({ level: level || "info", message: msg }),
       opencodeConfig,
       streaming: config.streaming,
+      toolOutputFileThreshold: config.toolOutputFileThreshold,
       requireUserWhitelist: config.requireUserWhitelist,
       adminUserIds: config.adminUserIds,
       botUserId: botUserId,
