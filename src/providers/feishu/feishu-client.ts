@@ -488,17 +488,9 @@ export function createFeishuClient(
           })
         }
 
-        const { steps, hasStepMarkers } = buildAssistantStepsFromParts(group.parts)
-        const showStepHeader = hasStepMarkers || steps.length > 1
+        const { steps } = buildAssistantStepsFromParts(group.parts)
 
-        for (const [index, step] of steps.entries()) {
-          if (showStepHeader) {
-            const titleSuffix = step.title ? `：${step.title}` : ''
-            elements.push({
-              tag: 'markdown',
-              content: `**步骤 ${index + 1}${titleSuffix}**`,
-            })
-          }
+        for (const step of steps) {
 
           const reasoningText = collectReasoningText(step.parts)
           if (reasoningText) {
