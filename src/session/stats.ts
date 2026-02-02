@@ -59,12 +59,18 @@ export async function getModelLimit(
   if (!isRecord(modelInfo)) return null;
 
   const limit = modelInfo?.limit;
-  if (!limit || typeof limit !== "object") return null;
+  if (!limit || typeof limit !== "object") {
+    console.warn(`[getModelLimit] Missing limit for model ${model.providerID}/${model.modelID}, modelInfo keys:`, Object.keys(modelInfo));
+    return null;
+  }
 
   const l = limit as Record<string, unknown>;
   const context = typeof l.context === "number" ? l.context : NaN;
   const output = typeof l.output === "number" ? l.output : NaN;
-  if (!Number.isFinite(context) || !Number.isFinite(output)) return null;
+  if (!Number.isFinite(context) || !Number.isFinite(output)) {
+    console.warn(`[getModelLimit] Invalid limit for model ${model.providerID}/${model.modelID}, limit:`, l);
+    return null;
+  }
   return { context, output };
 }
 
