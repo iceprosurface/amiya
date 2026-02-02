@@ -77,6 +77,7 @@ This document defines the migration plan to convert all bot outputs from post/ma
 ### Phase 5: Rollout and Observability
 
 - Add a feature flag for cards by chat/tenant/percentage.
+- Use `useCardMessages: false` in Feishu config to rollback to rich text.
 - Track metrics:
   - Send/update success rate, rate-limit frequency, finalize success, watchdog triggers.
 - Keep a rollback switch to old rendering until stability is proven.

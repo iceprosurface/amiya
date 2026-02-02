@@ -14,6 +14,26 @@ export interface IncomingMessage {
 
 export interface OutgoingMessage {
   text: string
+  mode?: 'streaming' | 'final'
+  status?: 'info' | 'warning' | 'error'
+  cardId?: string
+  elementId?: string
+  messageParts?: MessagePart[]
+}
+
+export type MessagePart = {
+  orderIndex?: number
+  type?: string
+  text?: string
+  reasoning?: string
+  description?: string
+  prompt?: string
+  agent?: string
+  tool?: string
+  state?: Record<string, unknown>
+  time?: { start?: number; end?: number }
+  id?: string
+  messageID?: string
 }
 
 export interface OutgoingTarget {
@@ -37,8 +57,14 @@ export interface MessageProvider {
       },
     ) => void | Promise<void>,
   ): void
-  sendMessage(target: OutgoingTarget, message: OutgoingMessage): Promise<{ messageId: string }>
-  replyMessage?(message: IncomingMessage, messageOut: OutgoingMessage): Promise<{ messageId: string }>
+  sendMessage(
+    target: OutgoingTarget,
+    message: OutgoingMessage,
+  ): Promise<{ messageId: string; cardId?: string; elementId?: string }>
+  replyMessage?(
+    message: IncomingMessage,
+    messageOut: OutgoingMessage,
+  ): Promise<{ messageId: string; cardId?: string; elementId?: string }>
   updateMessage?(messageId: string, messageOut: OutgoingMessage): Promise<boolean>
   addReaction?(messageId: string, emoji: string): Promise<boolean>
   getFeishuClient?(): FeishuCardClient | null
@@ -116,6 +142,66 @@ export type FeishuCardClient = {
       selectedLabels?: string[]
       nextLabel?: string
       completed?: boolean
+    },
+  ) => Promise<boolean>
+  sendAssistantCardMessageWithId?: (
+    chatId: string,
+    params: {
+      text: string
+      footer?: string
+      title?: string
+      streaming?: boolean
+      status?: 'info' | 'warning' | 'error'
+      messageParts?: MessagePart[]
+    },
+  ) => Promise<{ messageId: string; cardId: string; elementId: string } | null>
+  replyAssistantCardMessageWithId?: (
+    messageId: string,
+    params: {
+      text: string
+      footer?: string
+      title?: string
+      streaming?: boolean
+      status?: 'info' | 'warning' | 'error'
+      messageParts?: MessagePart[]
+    },
+    options?: { replyInThread?: boolean },
+  ) => Promise<{ messageId: string; cardId: string; elementId: string } | null>
+  updateAssistantCardMessageWithId?: (
+    messageId: string,
+    params: {
+      text: string
+      footer?: string
+      title?: string
+      streaming?: boolean
+      status?: 'info' | 'warning' | 'error'
+      messageParts?: MessagePart[]
+    },
+  ) => Promise<boolean>
+  updateAssistantCardElementContentWithId?: (
+    cardId: string,
+    elementId: string,
+    content: string,
+  ) => Promise<boolean>
+  updateAssistantCardConfigWithId?: (
+    cardId: string,
+    params: {
+      sequence: number
+      streaming?: boolean
+      summary?: string
+    },
+  ) => Promise<boolean>
+  updateAssistantCardEntityWithId?: (
+    cardId: string,
+    params: {
+      sequence: number
+      text: string
+      details?: string
+      meta?: string
+      showDetails: boolean
+      showMeta: boolean
+      title?: string
+      status?: 'info' | 'warning' | 'error'
     },
   ) => Promise<boolean>
 }

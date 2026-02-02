@@ -14,7 +14,7 @@ export const activeRequests = new Map<
 
 export const activeStreams = new Map<
   string,
-  { placeholderId: string }
+  { placeholderId: string; cardId?: string; elementId?: string }
 >();
 
 export type PendingQuestion = {

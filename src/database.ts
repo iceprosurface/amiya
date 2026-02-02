@@ -1,9 +1,13 @@
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
+
 import { getDataDir } from './config.js'
 
 let db: Database.Database | null = null
+
+const TOOL_OUTPUT_DB_MAX_CHARS = 8000
+const MESSAGE_PART_TEXT_MAX_CHARS = 8000
 
 export function getDatabase(): Database.Database {
   if (!db) {
@@ -114,6 +118,79 @@ export function getDatabase(): Database.Database {
         message_id TEXT PRIMARY KEY,
         command_name TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tool_runs (
+        part_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        thread_id TEXT,
+        message_id TEXT,
+        tool_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        title TEXT,
+        input_json TEXT,
+        output_text TEXT,
+        error_text TEXT,
+        output_truncated INTEGER NOT NULL DEFAULT 0,
+        output_file_name TEXT,
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (part_id, session_id)
+      )
+    `)
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS tool_runs_session_idx ON tool_runs (session_id)
+    `)
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS tool_runs_thread_idx ON tool_runs (thread_id)
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS message_parts (
+        part_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        message_id TEXT,
+        order_index INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        text TEXT,
+        reasoning TEXT,
+        tool_name TEXT,
+        tool_status TEXT,
+        tool_title TEXT,
+        input_text TEXT,
+        output_text TEXT,
+        error_text TEXT,
+        output_truncated INTEGER NOT NULL DEFAULT 0,
+        output_file_name TEXT,
+        started_at INTEGER,
+        completed_at INTEGER,
+        subtask_description TEXT,
+        subtask_prompt TEXT,
+        subtask_agent TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (part_id, session_id)
+      )
+    `)
+
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS message_parts_message_idx ON message_parts (session_id, message_id, order_index)
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS message_render_cache (
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        rendered_text TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (session_id, message_id)
       )
     `)
   }
@@ -331,6 +408,211 @@ export function markCommandProcessed(messageId: string, commandName: string): vo
       'INSERT OR IGNORE INTO processed_commands (message_id, command_name) VALUES (?, ?)',
     )
     .run(messageId, commandName)
+}
+
+export type ToolRunRecord = {
+  partId: string
+  sessionId: string
+  threadId?: string
+  messageId?: string
+  toolName: string
+  status: string
+  title?: string
+  inputJson?: string
+  outputText?: string
+  errorText?: string
+  outputTruncated?: boolean
+  outputFileName?: string
+  startedAt?: number
+  completedAt?: number
+}
+
+export type MessagePartRecord = {
+  partId: string
+  sessionId: string
+  messageId?: string
+  orderIndex: number
+  type: string
+  text?: string
+  reasoning?: string
+  toolName?: string
+  toolStatus?: string
+  toolTitle?: string
+  inputText?: string
+  outputText?: string
+  errorText?: string
+  outputTruncated?: boolean
+  outputFileName?: string
+  startedAt?: number
+  completedAt?: number
+  subtaskDescription?: string
+  subtaskPrompt?: string
+  subtaskAgent?: string
+}
+
+const truncateMessagePartText = (value?: string): { value?: string; truncated: boolean } => {
+  if (!value) return { value, truncated: false }
+  if (value.length <= MESSAGE_PART_TEXT_MAX_CHARS) return { value, truncated: false }
+  return { value: value.slice(0, MESSAGE_PART_TEXT_MAX_CHARS), truncated: true }
+}
+
+export function upsertMessagePart(record: MessagePartRecord): void {
+  const input = truncateMessagePartText(record.inputText)
+  const output = truncateMessagePartText(record.outputText)
+  const error = truncateMessagePartText(record.errorText)
+  const outputTruncated =
+    Boolean(record.outputTruncated) || input.truncated || output.truncated || error.truncated
+
+  getDatabase()
+    .prepare(
+      `INSERT INTO message_parts (
+        part_id,
+        session_id,
+        message_id,
+        order_index,
+        type,
+        text,
+        reasoning,
+        tool_name,
+        tool_status,
+        tool_title,
+        input_text,
+        output_text,
+        error_text,
+        output_truncated,
+        output_file_name,
+        started_at,
+        completed_at,
+        subtask_description,
+        subtask_prompt,
+        subtask_agent,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(part_id, session_id) DO UPDATE SET
+        message_id = excluded.message_id,
+        order_index = excluded.order_index,
+        type = excluded.type,
+        text = excluded.text,
+        reasoning = excluded.reasoning,
+        tool_name = excluded.tool_name,
+        tool_status = excluded.tool_status,
+        tool_title = excluded.tool_title,
+        input_text = excluded.input_text,
+        output_text = excluded.output_text,
+        error_text = excluded.error_text,
+        output_truncated = excluded.output_truncated,
+        output_file_name = excluded.output_file_name,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        subtask_description = excluded.subtask_description,
+        subtask_prompt = excluded.subtask_prompt,
+        subtask_agent = excluded.subtask_agent,
+        updated_at = CURRENT_TIMESTAMP`,
+    )
+    .run(
+      record.partId,
+      record.sessionId,
+      record.messageId ?? null,
+      record.orderIndex,
+      record.type,
+      record.text ?? null,
+      record.reasoning ?? null,
+      record.toolName ?? null,
+      record.toolStatus ?? null,
+      record.toolTitle ?? null,
+      input.value ?? null,
+      output.value ?? null,
+      error.value ?? null,
+      outputTruncated ? 1 : 0,
+      record.outputFileName ?? null,
+      record.startedAt ?? null,
+      record.completedAt ?? null,
+      record.subtaskDescription ?? null,
+      record.subtaskPrompt ?? null,
+      record.subtaskAgent ?? null,
+    )
+}
+
+export function upsertMessageRenderCache(params: {
+  sessionId: string
+  messageId: string
+  renderedText: string
+}): void {
+  getDatabase()
+    .prepare(
+      `INSERT INTO message_render_cache (
+        session_id,
+        message_id,
+        rendered_text,
+        updated_at
+      ) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(session_id, message_id) DO UPDATE SET
+        rendered_text = excluded.rendered_text,
+        updated_at = CURRENT_TIMESTAMP`,
+    )
+    .run(params.sessionId, params.messageId, params.renderedText)
+}
+
+export function upsertToolRun(record: ToolRunRecord): void {
+  const outputText = record.outputText ?? null
+  const errorText = record.errorText ?? null
+  let truncatedOutput = record.outputTruncated ?? false
+  let storedOutput = outputText
+  if (storedOutput && storedOutput.length > TOOL_OUTPUT_DB_MAX_CHARS) {
+    storedOutput = storedOutput.slice(0, TOOL_OUTPUT_DB_MAX_CHARS)
+    truncatedOutput = true
+  }
+
+  getDatabase()
+    .prepare(
+      `INSERT INTO tool_runs (
+        part_id,
+        session_id,
+        thread_id,
+        message_id,
+        tool_name,
+        status,
+        title,
+        input_json,
+        output_text,
+        error_text,
+        output_truncated,
+        output_file_name,
+        started_at,
+        completed_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(part_id, session_id) DO UPDATE SET
+        thread_id = excluded.thread_id,
+        message_id = excluded.message_id,
+        tool_name = excluded.tool_name,
+        status = excluded.status,
+        title = excluded.title,
+        input_json = excluded.input_json,
+        output_text = excluded.output_text,
+        error_text = excluded.error_text,
+        output_truncated = excluded.output_truncated,
+        output_file_name = excluded.output_file_name,
+        started_at = excluded.started_at,
+        completed_at = excluded.completed_at,
+        updated_at = CURRENT_TIMESTAMP`,
+    )
+    .run(
+      record.partId,
+      record.sessionId,
+      record.threadId ?? null,
+      record.messageId ?? null,
+      record.toolName,
+      record.status,
+      record.title ?? null,
+      record.inputJson ?? null,
+      storedOutput,
+      errorText,
+      truncatedOutput ? 1 : 0,
+      record.outputFileName ?? null,
+      record.startedAt ?? null,
+      record.completedAt ?? null,
+    )
 }
 
 export function getQuestionRequest(requestId: string): {

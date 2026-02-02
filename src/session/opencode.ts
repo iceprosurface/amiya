@@ -11,7 +11,9 @@ import {
   setChannelDirectory,
   setThreadSession,
   updateQuestionRequestCard,
+  upsertMessagePart,
   upsertQuestionRequest,
+  upsertToolRun,
 } from "../database.js";
 import { OpenCodeApiError } from "../errors.js";
 import { initializeOpencodeForDirectory } from "../opencode.js";
@@ -30,6 +32,158 @@ import { createStreamingController } from "./opencode-streaming.js";
 import { activeRequests, activeStreams, pendingPermissions, pendingQuestions } from "./state.js";
 import { buildFooter } from "./stats.js";
 import { buildFailureReport, describeError, isRecord, logWith, toUserErrorMessage } from "./utils.js";
+
+const buildAttachmentQueues = (attachments: ToolAttachment[]) => {
+  const queues = new Map<string, string[]>();
+  for (const attachment of attachments) {
+    const list = queues.get(attachment.tool) ?? [];
+    list.push(attachment.fileName);
+    queues.set(attachment.tool, list);
+  }
+  return queues;
+};
+
+const persistToolRunsFromResult = (
+  result: unknown,
+  options: {
+    sessionId: string;
+    threadId?: string;
+    messageId?: string;
+    attachments: ToolAttachment[];
+    outputFileThreshold: number;
+  },
+) => {
+  const parts = extractPartsFromPromptResult(result);
+  const attachmentQueues = buildAttachmentQueues(options.attachments);
+  let fallbackIndex = 0;
+  for (const part of parts) {
+    if (!isRecord(part)) continue;
+    if (part.type !== "tool") continue;
+    const toolName = typeof part.tool === "string" ? part.tool : "tool";
+    if (toolName === "question") continue;
+    const state = isRecord(part.state) ? part.state : undefined;
+    if (!state) continue;
+    const status = typeof state.status === "string" ? state.status : "unknown";
+    const title = typeof state.title === "string" ? state.title : undefined;
+    const input = state.input;
+    const inputJson =
+      typeof input === "string"
+        ? input
+        : input !== undefined
+          ? JSON.stringify(input)
+          : undefined;
+    const outputText = typeof state.output === "string" ? state.output : undefined;
+    const errorText = typeof state.error === "string" ? state.error : undefined;
+
+    let outputFileName: string | undefined;
+    let outputTruncated = false;
+    if (outputText && outputText.length > options.outputFileThreshold) {
+      const queue = attachmentQueues.get(toolName);
+      if (queue && queue.length > 0) {
+        outputFileName = queue.shift();
+      }
+      outputTruncated = true;
+    }
+
+    const partId = typeof part.id === "string"
+      ? part.id
+      : `${options.sessionId}-${toolName}-${fallbackIndex++}`;
+    const messageId = typeof part.messageID === "string" ? part.messageID : options.messageId;
+
+    upsertToolRun({
+      partId,
+      sessionId: options.sessionId,
+      threadId: options.threadId,
+      messageId,
+      toolName,
+      status,
+      title,
+      inputJson,
+      outputText,
+      errorText,
+      outputTruncated,
+      outputFileName,
+    });
+  }
+};
+
+const extractMessageIdFromPromptResult = (result: unknown): string | undefined => {
+  if (!isRecord(result)) return undefined;
+  const data = isRecord(result.data) ? result.data : undefined;
+  const message = isRecord(data?.message) ? data.message : undefined;
+  if (typeof message?.id === "string") return message.id;
+  const messages = Array.isArray(data?.messages) ? data.messages : undefined;
+  const firstMessage = isRecord(messages?.[0]) ? messages?.[0] : undefined;
+  if (typeof firstMessage?.id === "string") return firstMessage.id;
+  const resultData = isRecord(data?.result) ? data.result : undefined;
+  const resultMessage = isRecord(resultData?.message) ? resultData.message : undefined;
+  if (typeof resultMessage?.id === "string") return resultMessage.id;
+  return undefined;
+};
+
+const persistMessagePartsFromResult = (
+  result: unknown,
+  options: { sessionId: string; messageId?: string },
+) => {
+  const parts = extractPartsFromPromptResult(result);
+  if (parts.length === 0) return;
+  const fallbackMessageId = options.messageId || extractMessageIdFromPromptResult(result);
+  parts.forEach((part, orderIndex) => {
+    if (!isRecord(part)) return;
+    const type = typeof part.type === "string" ? part.type : "unknown";
+    const messageId = typeof part.messageID === "string" ? part.messageID : fallbackMessageId;
+    const partId = typeof part.id === "string"
+      ? part.id
+      : `${messageId || options.sessionId}-part-${orderIndex}`;
+    const baseRecord = {
+      partId,
+      sessionId: options.sessionId,
+      messageId,
+      orderIndex,
+      type,
+      text: typeof part.text === "string" ? part.text : undefined,
+      reasoning: typeof part.reasoning === "string" ? part.reasoning : undefined,
+      subtaskDescription: typeof part.description === "string" ? part.description : undefined,
+      subtaskPrompt: typeof part.prompt === "string" ? part.prompt : undefined,
+      subtaskAgent: typeof part.agent === "string" ? part.agent : undefined,
+    };
+
+    if (type === "tool") {
+      const toolName = typeof part.tool === "string" ? part.tool : "tool";
+      const state = isRecord(part.state) ? part.state : undefined;
+      const status = typeof state?.status === "string" ? state.status : undefined;
+      const title = typeof state?.title === "string" ? state.title : undefined;
+      const input = state?.input;
+      const inputText =
+        typeof input === "string"
+          ? input
+          : input !== undefined
+            ? JSON.stringify(input)
+            : undefined;
+      const outputText = typeof state?.output === "string" ? state.output : undefined;
+      const errorText = typeof state?.error === "string" ? state.error : undefined;
+      const startedAt =
+        isRecord(part.time) && typeof part.time.start === "number" ? part.time.start : undefined;
+      const completedAt =
+        isRecord(part.time) && typeof part.time.end === "number" ? part.time.end : undefined;
+
+      upsertMessagePart({
+        ...baseRecord,
+        toolName,
+        toolStatus: status,
+        toolTitle: title,
+        inputText,
+        outputText,
+        errorText,
+        startedAt,
+        completedAt,
+      });
+      return;
+    }
+
+    upsertMessagePart(baseRecord);
+  });
+};
 
 export function parseModelString(
   model: string,
@@ -774,14 +928,17 @@ export async function sendPrompt({
           provider,
           message,
           throttleMs: streamingConfig.throttleMs ?? 700,
-          maxMessageChars: streamingConfig.maxMessageChars ?? 9500,
+          maxMessageChars: streamingConfig.maxMessageChars ?? 20000,
           mode: streamingConfig.mode ?? "update",
-          maxUpdateCount: streamingConfig.maxUpdateCount ?? 15,
           logger,
         });
 
-        const placeholderId = await streamSink.start();
-        activeStreams.set(message.threadId, { placeholderId });
+        const placeholder = await streamSink.start();
+        activeStreams.set(message.threadId, {
+          placeholderId: placeholder.messageId,
+          cardId: placeholder.cardId,
+          elementId: placeholder.elementId,
+        });
       }
 
       streamController = await createStreamingController({
@@ -910,6 +1067,17 @@ export async function sendPrompt({
         attachmentTools: ["bash"],
       })
       : { text: extractTextFromPromptResult(response), attachments: [] };
+    persistMessagePartsFromResult(response, {
+      sessionId,
+      messageId: message.messageId,
+    });
+    persistToolRunsFromResult(response, {
+      sessionId,
+      threadId: message.threadId,
+      messageId: message.messageId,
+      attachments,
+      outputFileThreshold: toolThreshold,
+    });
     if (!questionAsked) {
       await sendQuestionCards(response, {
         provider,

@@ -30,7 +30,11 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
   }
   const streamState = activeStreams.get(message.threadId);
   if (streamState && provider.updateMessage) {
-    await provider.updateMessage(streamState.placeholderId, { text: "🛑 已中止" });
+    await provider.updateMessage(streamState.placeholderId, {
+      text: "🛑 已中止",
+      cardId: streamState.cardId,
+      elementId: streamState.elementId,
+    });
     activeStreams.delete(message.threadId);
   }
   await sendReply(provider, message, "🛑 已中止当前请求。");

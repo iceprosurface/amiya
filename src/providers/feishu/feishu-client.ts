@@ -1,5 +1,16 @@
 import * as lark from '@larksuiteoapi/node-sdk'
 import type { FeishuConfig } from './feishu-config'
+import {
+  ASSISTANT_TOOL_OUTPUT_MARKER,
+  buildAssistantStepsFromParts,
+  extractAmiyaXml,
+  parseAssistantToolRuns,
+  splitAssistantDetails,
+  splitAssistantThinkingBlock,
+  splitFooterLines,
+  type AssistantMessagePart,
+  type AssistantToolRun,
+} from './assistant-card-state'
 import { feishuPostToJson, markdownToFeishuPost } from './markdown-adapter.js'
 
 export function createFeishuClient(
@@ -155,6 +166,614 @@ export function createFeishuClient(
     if (!data || typeof data !== 'object') return null
     const fileKey = (data as Record<string, unknown>).file_key
     return typeof fileKey === 'string' && fileKey.length > 0 ? fileKey : null
+  }
+
+  function extractCardId(result: unknown): string | null {
+    if (!result || typeof result !== 'object') return null
+    const record = result as Record<string, unknown>
+    const data = record.data
+    if (data && typeof data === 'object') {
+      const cardId = (data as Record<string, unknown>).card_id
+      if (typeof cardId === 'string' && cardId.length > 0) return cardId
+    }
+    const direct = (record as Record<string, unknown>).card_id
+    return typeof direct === 'string' && direct.length > 0 ? direct : null
+  }
+
+  async function requestCardKit<T>(
+    method: 'POST' | 'PATCH' | 'PUT',
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<T | null> {
+    try {
+      if (!fetcher) {
+        log('CardKit request requires fetch support', 'warn')
+        return null
+      }
+      const tenantToken = await fetchTenantAccessToken()
+      if (!tenantToken) return null
+      const payloadStr = JSON.stringify(body)
+      log(`CardKit ${method} ${path} payload_size=${payloadStr.length}B`, 'debug')
+      if (method === 'POST' && path === '/open-apis/cardkit/v1/cards') {
+        const dataStr = typeof body.data === 'string' ? body.data : ''
+        if (dataStr) {
+          try {
+            const card = JSON.parse(dataStr) as { schema?: string; body?: { elements?: Array<{ tag?: string }> } }
+            const tags = (card.body?.elements || []).map((element) => element.tag || '?').join(',')
+            log(
+              `CardKit create summary schema=${card.schema || '?'} elements=${card.body?.elements?.length ?? 0} tags=${tags || '-'}`,
+              'debug',
+            )
+          } catch {
+            log(`CardKit create summary data_size=${dataStr.length}B`, 'debug')
+          }
+        }
+      }
+      const response = await fetcher(`${baseUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${tenantToken}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+        body: payloadStr,
+      }) as { ok?: boolean; status?: number; statusText?: string; json?: () => Promise<unknown> }
+      if (!response || response.ok === false) {
+        const status = response?.status ?? 'unknown'
+        const statusText = response?.statusText ?? ''
+        log(`CardKit request failed: ${method} ${path} ${status} ${statusText}`, 'warn')
+        return null
+      }
+      const result = (await response.json?.().catch(() => null)) as T | null
+      const resultStr = JSON.stringify(result)
+      log(`CardKit ${method} ${path} response_status=${response.status} response_size=${resultStr.length}B`, 'debug')
+      if (method === 'POST' && path === '/open-apis/cardkit/v1/cards') {
+        const code = (result as Record<string, unknown> | null)?.code
+        const cardId = extractCardId(result)
+        log(`CardKit create result code=${code ?? 'unknown'} card_id=${cardId ?? '-'}`, 'debug')
+      }
+      return result
+    } catch (error) {
+      log(`CardKit request failed: ${error}`, 'error')
+      return null
+    }
+  }
+
+  const buildAssistantCardContent = (params: {
+    text: string
+    footer?: string
+    title?: string
+    streaming?: boolean
+    status?: 'info' | 'warning' | 'error'
+    elementId?: string
+    details?: string
+    meta?: string
+    showDetails?: boolean
+    showMeta?: boolean
+    messageParts?: AssistantMessagePart[]
+  }) => {
+    const elementId = params.elementId || 'assistant_content'
+    const template = params.status === 'error'
+      ? 'red'
+      : params.status === 'warning'
+        ? 'orange'
+        : 'blue'
+    const title = params.title && params.title.trim().length > 0
+      ? params.title
+      : 'Amiya'
+
+    const TOOL_OUTPUT_MAX_INLINE_CHARS = 1800
+    const TOOL_INPUT_MAX_INLINE_CHARS = 1200
+    const TOOL_OUTPUT_MAX_INLINE_LINES = 50
+
+    const extractContextPercent = (text: string): string | null => {
+      const match = text.match(/上下文\s*([0-9.]+%)/)
+      return match ? match[1] : null
+    }
+
+    const buildMetaList = (text: string): string => {
+      const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+      if (lines.length === 0) return ''
+      return lines.map((line) => `- ${line}`).join('\n')
+    }
+
+    const xmlPayload = extractAmiyaXml(params.text)
+    const messageParts = Array.isArray(params.messageParts) && params.messageParts.length > 0
+      ? params.messageParts
+      : xmlPayload.messageParts
+    const { cleanedText, toolRuns } = xmlPayload
+    const { body, footer } = splitFooterLines(cleanedText)
+    const elements: Record<string, unknown>[] = []
+
+    const buildToolElements = (runs: AssistantToolRun[]) => {
+      const toolElements: Record<string, unknown>[] = []
+      if (runs.length === 0) return toolElements
+      for (const run of runs) {
+        const statusText = run.status
+        const durationText = run.durationText || '-'
+        const inputText = run.input || ''
+        const outputText = run.output || ''
+
+        const inputField = (() => {
+          if (!inputText) return '-'
+          const lines = inputText.split('\n')
+          if (lines.length > TOOL_OUTPUT_MAX_INLINE_LINES) {
+            return '输入过长，请查看附件/日志'
+          }
+          const trimmed = inputText.replace(/\s+$/, '')
+          if (trimmed.length > TOOL_INPUT_MAX_INLINE_CHARS) {
+            return '输入过长，请查看附件/日志'
+          }
+          return trimmed
+        })()
+
+        const outputField = (() => {
+          if (run.outputTooLong) {
+            const hint = run.outputFileName ? `输出在文件中：${run.outputFileName}` : '输出过长，请查看附件/日志'
+            return hint
+          }
+          if (!outputText) return '-'
+          const lines = outputText.split('\n')
+          if (lines.length > TOOL_OUTPUT_MAX_INLINE_LINES) {
+            return '输出过长，请查看附件/日志'
+          }
+          const trimmed = outputText.replace(/\s+$/, '')
+          if (trimmed.length > TOOL_OUTPUT_MAX_INLINE_CHARS) {
+            return '输出过长，请查看附件/日志'
+          }
+          return trimmed
+        })()
+
+        toolElements.push({
+          tag: 'div',
+          fields: [
+            {
+              is_short: true,
+              text: { tag: 'plain_text', content: `工具：${run.tool}` },
+            },
+            {
+              is_short: true,
+              text: { tag: 'plain_text', content: `状态：${statusText}` },
+            },
+            {
+              is_short: true,
+              text: { tag: 'plain_text', content: `耗时：${durationText}` },
+            },
+            {
+              is_short: false,
+              text: { tag: 'plain_text', content: `输入：\n${inputField}` },
+            },
+            {
+              is_short: false,
+              text: { tag: 'plain_text', content: `输出：\n${outputField}` },
+            },
+          ],
+        })
+      }
+      return toolElements
+    }
+
+    const formatDurationText = (part: AssistantMessagePart): string | undefined => {
+      const time = part.time
+      if (!time || typeof time !== 'object') return undefined
+      const start = (time as Record<string, unknown>).start
+      const end = (time as Record<string, unknown>).end
+      if (typeof start !== 'number' || typeof end !== 'number' || end < start) return undefined
+      const seconds = (end - start) / 1000
+      if (!Number.isFinite(seconds)) return undefined
+      return `${seconds.toFixed(1)}s`
+    }
+
+    const buildToolRunsFromParts = (parts: AssistantMessagePart[]): AssistantToolRun[] => {
+      const runs: AssistantToolRun[] = []
+      for (const part of parts) {
+        if (part.type !== 'tool') continue
+        const toolName = typeof part.tool === 'string' ? part.tool : 'tool'
+        if (toolName === 'question') continue
+        const state = part.state && typeof part.state === 'object'
+          ? (part.state as Record<string, unknown>)
+          : undefined
+        if (!state) continue
+        const statusRaw = typeof state.status === 'string' ? state.status : 'unknown'
+        const status: AssistantToolRun['status'] =
+          statusRaw === 'completed'
+          || statusRaw === 'running'
+          || statusRaw === 'pending'
+          || statusRaw === 'error'
+          || statusRaw === 'unknown'
+            ? statusRaw
+            : 'unknown'
+        const inputValue = state.input
+        const inputText =
+          typeof inputValue === 'string'
+            ? inputValue
+            : inputValue !== undefined
+              ? JSON.stringify(inputValue)
+              : ''
+        const outputValue = state.output
+        const outputText =
+          typeof outputValue === 'string'
+            ? outputValue
+            : outputValue !== undefined
+              ? JSON.stringify(outputValue)
+              : ''
+        const errorValue = state.error
+        const errorText =
+          typeof errorValue === 'string'
+            ? errorValue
+            : errorValue !== undefined
+              ? JSON.stringify(errorValue)
+              : ''
+
+        const run: AssistantToolRun = {
+          tool: toolName,
+          status,
+          durationText: formatDurationText(part),
+        }
+
+        if (status === 'completed') {
+          run.output = outputText
+        } else if (status === 'error') {
+          run.output = errorText
+        } else if (status === 'running' || status === 'pending') {
+          run.input = inputText
+        } else if (outputText) {
+          run.output = outputText
+        }
+
+        const outputTruncated = typeof state.outputTruncated === 'boolean'
+          ? state.outputTruncated
+          : undefined
+        const outputFileName = typeof state.outputFileName === 'string'
+          ? state.outputFileName
+          : undefined
+        if (outputTruncated) {
+          run.outputTooLong = true
+        }
+        if (outputFileName) {
+          run.outputFileName = outputFileName
+        }
+        runs.push(run)
+      }
+      return runs
+    }
+
+    const buildSubtaskLines = (parts: AssistantMessagePart[]) => {
+      const lines: string[] = []
+      for (const part of parts) {
+        if (part.type !== 'subtask') continue
+        const description = typeof part.description === 'string' ? part.description : ''
+        const agent = typeof part.agent === 'string' ? part.agent : ''
+        const prompt = typeof part.prompt === 'string' ? part.prompt : ''
+        const label = description || prompt || '子任务'
+        const agentInfo = agent ? `（agent: ${agent}）` : ''
+        lines.push(`- ${label}${agentInfo}`)
+      }
+      return lines
+    }
+
+    const collectReasoningText = (parts: AssistantMessagePart[]) => {
+      const lines: string[] = []
+      for (const part of parts) {
+        if (part.type !== 'reasoning') continue
+        const reasoning = typeof part.reasoning === 'string'
+          ? part.reasoning
+          : typeof part.text === 'string'
+            ? part.text
+            : ''
+        if (reasoning.trim()) lines.push(reasoning.trim())
+      }
+      return lines.join('\n')
+    }
+
+    if (messageParts.length > 0) {
+      const grouped: Array<{ messageId?: string; parts: AssistantMessagePart[] }> = []
+      for (const part of messageParts) {
+        const messageId = typeof part.messageID === 'string' ? part.messageID : undefined
+        const last = grouped[grouped.length - 1]
+        if (!last || last.messageId !== messageId) {
+          grouped.push({ messageId, parts: [part] })
+        } else {
+          last.parts.push(part)
+        }
+      }
+      const showMessageHeader = grouped.length > 1
+      const reasoningLabel = params.streaming ? '思考中' : '思考'
+
+      grouped.forEach((group, groupIndex) => {
+        if (showMessageHeader) {
+          elements.push({
+            tag: 'markdown',
+            content: `**回复 ${groupIndex + 1}**`,
+          })
+        }
+
+        const { steps, hasStepMarkers } = buildAssistantStepsFromParts(group.parts)
+        const showStepHeader = hasStepMarkers || steps.length > 1
+
+        for (const [index, step] of steps.entries()) {
+          if (showStepHeader) {
+            const titleSuffix = step.title ? `：${step.title}` : ''
+            elements.push({
+              tag: 'markdown',
+              content: `**步骤 ${index + 1}${titleSuffix}**`,
+            })
+          }
+
+          const reasoningText = collectReasoningText(step.parts)
+          if (reasoningText) {
+            if (reasoningText.length > 150) {
+              elements.push({
+                tag: 'collapsible_panel',
+                expanded: false,
+                header: {
+                  title: {
+                    tag: 'plain_text',
+                    content: reasoningLabel,
+                  },
+                },
+                elements: [
+                  {
+                    tag: 'div',
+                    text: { tag: 'plain_text', content: reasoningText },
+                  },
+                ],
+              })
+            } else {
+              elements.push({
+                tag: 'markdown',
+                content: `**${reasoningLabel}**：${reasoningText}`,
+              })
+            }
+          }
+
+          const textParts = step.parts
+            .filter((part) => part.type === 'text')
+            .map((part) => (typeof part.text === 'string' ? part.text : ''))
+            .filter((text) => text.trim().length > 0)
+          if (textParts.length > 0) {
+            elements.push({
+              tag: 'markdown',
+              content: textParts.join('\n'),
+            })
+          }
+
+          const subtaskLines = buildSubtaskLines(step.parts)
+          if (subtaskLines.length > 0) {
+            elements.push({
+              tag: 'markdown',
+              content: `**子任务**\n${subtaskLines.join('\n')}`,
+            })
+          }
+
+          const runs = buildToolRunsFromParts(step.parts)
+          for (const run of runs) {
+            const toolLabel = run.tool ? `工具输出：${run.tool}` : '工具输出'
+            elements.push({
+              tag: 'collapsible_panel',
+              expanded: false,
+              header: {
+                title: {
+                  tag: 'plain_text',
+                  content: toolLabel,
+                },
+              },
+              elements: buildToolElements([run]),
+            })
+          }
+        }
+      })
+
+      if (elements.length === 0) {
+        elements.push({
+          tag: 'markdown',
+          content: '...',
+          element_id: elementId,
+        })
+      }
+
+      const metaText = params.meta ?? footer
+      if (metaText && metaText.trim().length > 0) {
+        const contextPercent = extractContextPercent(metaText)
+        const footerContent = metaText.trim()
+        const metaTitle = contextPercent ? `上下文 ${contextPercent}` : '元信息'
+        const metaList = buildMetaList(footerContent)
+        elements.push({
+          tag: 'collapsible_panel',
+          expanded: false,
+          header: {
+            title: { tag: 'plain_text', content: metaTitle },
+          },
+          elements: [{
+            tag: 'div',
+            text: { tag: 'lark_md', content: metaList || footerContent },
+          }],
+        })
+      }
+    } else {
+      const derived = (() => {
+        const { thinkingContent, body: bodyWithoutThinking } = splitAssistantThinkingBlock(body)
+        let { main, details } = splitAssistantDetails(bodyWithoutThinking)
+        if ((!details || details.trim().length === 0) && toolRuns.length > 0) {
+          details = ASSISTANT_TOOL_OUTPUT_MARKER
+        }
+        return {
+          text: params.details || params.meta ? cleanedText : main,
+          details: params.details ?? details,
+          meta: params.meta ?? footer,
+          thinkingContent,
+          toolRuns,
+        }
+      })()
+
+      const contextPercent = derived.meta ? extractContextPercent(derived.meta) : null
+      const mainText = derived.text.trim()
+
+      if (derived.thinkingContent !== undefined) {
+        const thinkingTitle = params.streaming ? '思考中' : '思考中（已完成）'
+        elements.push({
+          tag: 'collapsible_panel',
+          expanded: false,
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: thinkingTitle,
+            },
+          },
+          elements: [
+            {
+              tag: 'div',
+              text: {
+                tag: 'plain_text',
+                content: derived.thinkingContent || thinkingTitle,
+              },
+            },
+          ],
+        })
+      }
+
+      elements.push({
+        tag: 'markdown',
+        content: mainText || '...',
+        element_id: elementId,
+      })
+
+      if (derived.details && derived.details.trim().length > 0) {
+        const runs = derived.toolRuns.length > 0
+          ? derived.toolRuns
+          : parseAssistantToolRuns(derived.details)
+        const trimmedDetails = derived.details.trim()
+        const isSubtaskOnly = trimmedDetails.startsWith('— 子任务 —')
+          && !trimmedDetails.startsWith('— 子任务/工具输出 —')
+
+        let handledDetails = false
+        if (isSubtaskOnly) {
+          const subtaskBody = trimmedDetails.replace(/^— 子任务 —\s*/u, '').trim()
+          elements.push({
+            tag: 'collapsible_panel',
+            expanded: false,
+            header: {
+              title: {
+                tag: 'plain_text',
+                content: params.streaming ? '子任务（进行中）' : '子任务',
+              },
+            },
+            elements: [
+              {
+                tag: 'div',
+                text: {
+                  tag: 'plain_text',
+                  content: subtaskBody || '进行中',
+                },
+              },
+            ],
+          })
+          handledDetails = true
+        }
+
+        if (!handledDetails && params.streaming) {
+          elements.push({
+            tag: 'collapsible_panel',
+            expanded: false,
+            header: {
+              title: {
+                tag: 'plain_text',
+                content: '工具输出（进行中）',
+              },
+            },
+            elements: [
+              {
+                tag: 'div',
+                text: {
+                  tag: 'plain_text',
+                  content: '工具输出进行中',
+                },
+              },
+            ],
+          })
+          handledDetails = true
+        }
+
+        if (!handledDetails) {
+          if (runs.length === 0) {
+            elements.push({
+              tag: 'collapsible_panel',
+              expanded: false,
+              header: {
+                title: {
+                  tag: 'plain_text',
+                  content: '工具输出',
+                },
+              },
+              elements: [{
+                tag: 'div',
+                text: {
+                  tag: 'plain_text',
+                  content: derived.details.trim(),
+                },
+              }],
+            })
+          } else {
+            elements.push({
+              tag: 'collapsible_panel',
+              expanded: false,
+              header: {
+                title: {
+                  tag: 'plain_text',
+                  content: runs.length > 0 ? `工具输出（${runs.length}）` : '工具输出',
+                },
+              },
+              elements: buildToolElements(runs),
+            })
+          }
+        }
+      }
+
+      if (derived.meta && derived.meta.trim().length > 0) {
+        const footerContent = derived.meta.trim()
+        const metaTitle = contextPercent ? `上下文 ${contextPercent}` : '元信息'
+        const metaList = buildMetaList(footerContent)
+        const metaElements = [{
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: metaList || footerContent,
+          },
+        }]
+        elements.push({
+          tag: 'collapsible_panel',
+          expanded: false,
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: metaTitle,
+            },
+          },
+          elements: metaElements,
+        })
+      }
+    }
+
+    return {
+      schema: '2.0',
+      config: {
+        update_multi: true,
+        width_mode: 'fill',
+        summary: {
+          content: params.streaming ? '[Generating]' : '',
+        },
+        ...(params.streaming ? { streaming_mode: true } : {}),
+      },
+      header: {
+        template,
+        title: {
+          content: params.streaming ? `${title}（生成中）` : title,
+          tag: 'plain_text',
+        },
+      },
+      body: {
+        elements,
+      },
+    }
   }
 
   const buildApprovalCardContent = (params: {
@@ -939,6 +1558,203 @@ export function createFeishuClient(
         log(`Update question card failed: ${error}`, 'error')
         return false
       }
+    },
+
+    async sendAssistantCardMessageWithId(
+      chatId: string,
+      params: {
+        text: string
+        footer?: string
+        title?: string
+        streaming?: boolean
+        status?: 'info' | 'warning' | 'error'
+        messageParts?: AssistantMessagePart[]
+      },
+    ): Promise<{ messageId: string; cardId: string; elementId: string } | null> {
+      try {
+        const elementId = 'assistant_content'
+        const cardContent = buildAssistantCardContent({
+          ...params,
+          elementId,
+          showDetails: false,
+          showMeta: false,
+        })
+        const cardResult = await requestCardKit<Record<string, unknown>>(
+          'POST',
+          '/open-apis/cardkit/v1/cards',
+          {
+            type: 'card_json',
+            data: JSON.stringify(cardContent),
+          },
+        )
+        const cardId = extractCardId(cardResult)
+        if (!cardId) {
+          log(`Assistant card create failed: missing card_id`, 'warn')
+          return null
+        }
+
+        const result: unknown = await client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: chatId,
+            msg_type: 'interactive',
+            content: JSON.stringify({ card_id: cardId }),
+          },
+        })
+        const messageId = extractMessageId(result)
+        if (!messageId) {
+          log(`Assistant card sent to ${chatId} but missing message_id`, 'warn')
+          return null
+        }
+        return { messageId, cardId, elementId }
+      } catch (error) {
+        log(`Send assistant card failed: ${error}`, 'error')
+        return null
+      }
+    },
+
+    async replyAssistantCardMessageWithId(
+      messageId: string,
+      params: {
+        text: string
+        footer?: string
+        title?: string
+        streaming?: boolean
+        status?: 'info' | 'warning' | 'error'
+        messageParts?: AssistantMessagePart[]
+      },
+      options?: { replyInThread?: boolean },
+    ): Promise<{ messageId: string; cardId: string; elementId: string } | null> {
+      try {
+        const cardContent = buildAssistantCardContent({
+          ...params,
+          showDetails: false,
+          showMeta: false,
+        })
+        const replyParams: Parameters<typeof client.im.message.reply>[0] = {
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        }
+
+        if (options?.replyInThread) {
+          ;(replyParams.data as Record<string, unknown>).reply_in_thread = true
+        }
+
+        const result: unknown = await client.im.message.reply(replyParams)
+        const replyId = extractMessageId(result)
+        if (!replyId) {
+          log(`Assistant card reply to ${messageId} but missing message_id`, 'warn')
+          return null
+        }
+        return { messageId: replyId, cardId: '', elementId: '' }
+      } catch (error) {
+        log(`Reply assistant card failed: ${error}`, 'error')
+        return null
+      }
+    },
+
+    async updateAssistantCardMessageWithId(
+      messageId: string,
+      params: {
+        text: string
+        footer?: string
+        title?: string
+        streaming?: boolean
+        status?: 'info' | 'warning' | 'error'
+        messageParts?: AssistantMessagePart[]
+      },
+    ): Promise<boolean> {
+      try {
+        const cardContent = buildAssistantCardContent({
+          ...params,
+          showDetails: false,
+          showMeta: false,
+        })
+        await client.im.message.patch({
+          path: { message_id: messageId },
+          data: {
+            content: JSON.stringify(cardContent),
+          },
+        })
+        return true
+      } catch (error) {
+        log(`Update assistant card failed: ${error}`, 'error')
+        return false
+      }
+    },
+    async updateAssistantCardElementContentWithId(
+      cardId: string,
+      elementId: string,
+      content: string,
+    ): Promise<boolean> {
+      const result = await requestCardKit<Record<string, unknown>>(
+        'PUT',
+        `/open-apis/cardkit/v1/cards/${cardId}/elements/${elementId}/content`,
+        { content },
+      )
+      return Boolean(result)
+    },
+    async updateAssistantCardConfigWithId(
+      cardId: string,
+      params: {
+        sequence: number
+        streaming?: boolean
+        summary?: string
+      },
+    ): Promise<boolean> {
+      const config = {
+        streaming_mode: params.streaming === true,
+        update_multi: true,
+        width_mode: 'fill',
+        summary: params.summary ? { content: params.summary } : undefined,
+      }
+      const settings = { config }
+      const result = await requestCardKit<Record<string, unknown>>(
+        'PATCH',
+        `/open-apis/cardkit/v1/cards/${cardId}/settings`,
+        {
+          sequence: params.sequence,
+          settings: JSON.stringify(settings),
+        },
+      )
+      return Boolean(result)
+    },
+    async updateAssistantCardEntityWithId(
+      cardId: string,
+      params: {
+        sequence: number
+        text: string
+        details?: string
+        meta?: string
+        showDetails: boolean
+        showMeta: boolean
+        title?: string
+        status?: 'info' | 'warning' | 'error'
+      },
+    ): Promise<boolean> {
+      const cardContent = buildAssistantCardContent({
+        text: params.text,
+        details: params.details,
+        meta: params.meta,
+        showDetails: params.showDetails,
+        showMeta: params.showMeta,
+        title: params.title,
+        status: params.status,
+        streaming: false,
+        elementId: 'assistant_content',
+      })
+      const result = await requestCardKit<Record<string, unknown>>(
+        'PUT',
+        `/open-apis/cardkit/v1/cards/${cardId}`,
+        {
+          sequence: params.sequence,
+          card: cardContent,
+        },
+      )
+      return Boolean(result)
     },
 
     async replyApprovalCardWithId(

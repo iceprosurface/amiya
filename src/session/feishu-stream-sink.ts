@@ -1,8 +1,231 @@
-import type { IncomingMessage, MessageProvider } from "../types.js"
+import {
+  ASSISTANT_THINKING_MARKER,
+  assistantCardStates,
+  buildAssistantCardText,
+  detectPanelStates,
+  extractAmiyaXml,
+  splitAssistantDetails,
+  splitFooterLines,
+} from "../providers/feishu/assistant-card-state.js"
+import type { IncomingMessage, MessagePart, MessageProvider } from "../types.js"
 import { sanitizeMarkdownForPreview } from "./markdown-preview.js"
-import { splitMarkdownIntoChunks } from "./stream-utils.js"
 import { createThrottledRenderer } from "./throttle.js"
 import { logWith } from "./utils.js"
+
+type PanelStates = {
+  hasThinkingPanel: boolean
+  hasToolPanel: boolean
+  thinkingContent?: string
+  toolContent?: string
+}
+
+export function createFeishuStreamSink(options: StreamSinkOptions) {
+  const { provider, message, logger } = options
+  const updateSupported = typeof provider.updateMessage === "function"
+  let currentMessageId: string | null = null
+  let currentCardId: string | null = null
+  let currentElementId: string | null = null
+  let currentSequence = 1
+  let lastRenderedText = ""
+  let lastPanelStates: PanelStates | null = null
+  let lastMessageParts: MessagePart[] | null = null
+
+  const truncateForCard = (text: string) => {
+    if (text.length <= options.maxMessageChars) {
+      return text
+    }
+    const suffix = "\n\n...(truncated)"
+    const allowed = Math.max(0, options.maxMessageChars - suffix.length)
+    return `${text.slice(0, allowed)}${suffix}`
+  }
+
+  const sendNewMessage = async (text: string, mode: "streaming" | "final") => {
+    const payload = { text, mode }
+    const result = provider.replyMessage
+      ? await provider.replyMessage(message, payload)
+      : await provider.sendMessage(
+          { channelId: message.channelId, threadId: message.threadId },
+          payload,
+        )
+    if (result.cardId) currentCardId = result.cardId
+    if (result.elementId) currentElementId = result.elementId
+    return result.messageId
+  }
+
+  const updateMessage = async (
+    messageId: string,
+    text: string,
+    mode: "streaming" | "final",
+    status?: "info" | "warning" | "error",
+    messageParts?: MessagePart[],
+  ): Promise<boolean> => {
+    const updater = provider.updateMessage
+    if (!updateSupported || !updater) return false
+    return await updater(messageId, {
+      text,
+      mode,
+      status,
+      cardId: currentCardId || undefined,
+      elementId: currentElementId || undefined,
+      messageParts,
+    })
+  }
+
+  const renderText = async (text: string) => {
+    const preview = sanitizeMarkdownForPreview(text)
+    const truncated = truncateForCard(preview)
+    if (truncated === lastRenderedText) return
+    if (!currentMessageId) {
+      currentMessageId = await sendNewMessage(truncated, "streaming")
+      lastRenderedText = truncated
+      return
+    }
+    const ok = await updateMessage(
+      currentMessageId,
+      truncated,
+      "streaming",
+      undefined,
+      lastMessageParts || undefined,
+    )
+    if (ok) {
+      lastRenderedText = truncated
+      return
+    }
+    logWith(logger, `Stream update failed messageId=${currentMessageId}`, "debug")
+  }
+
+  const throttled = createThrottledRenderer(
+    async (text) => {
+      await renderText(text)
+    },
+    Math.max(0, options.throttleMs),
+  )
+
+  return {
+    async start() {
+      const placeholderId = await sendNewMessage("", "streaming")
+      currentMessageId = placeholderId
+      lastRenderedText = ""
+      return {
+        messageId: placeholderId,
+        cardId: currentCardId || undefined,
+        elementId: currentElementId || undefined,
+      }
+    },
+    async render(text: string) {
+      const { cleanedText, messageParts } = extractAmiyaXml(text)
+      lastMessageParts = messageParts.length > 0 ? messageParts : lastMessageParts
+      throttled.update(cleanedText)
+      lastPanelStates = detectPanelStates(text)
+    },
+    async finalize(finalText: string, footer: string) {
+      await throttled.flush()
+      const combined = finalText.trim() ? `${finalText.trim()}\n\n${footer}` : footer
+      if (!combined) return
+
+      const { cleanedText, xmlBlock, messageParts } = extractAmiyaXml(combined)
+      if (messageParts.length > 0) {
+        lastMessageParts = messageParts
+      }
+      const { body, footer: parsedFooter } = splitFooterLines(cleanedText)
+      let { main, details } = splitAssistantDetails(body)
+
+      const finalPanelStates: PanelStates = detectPanelStates(combined)
+
+      if (lastPanelStates) {
+        if (!finalPanelStates.hasThinkingPanel && lastPanelStates.hasThinkingPanel) {
+          const thinkingContent = lastPanelStates.thinkingContent ?? ''
+          const thinkingBlock = thinkingContent ? `${ASSISTANT_THINKING_MARKER}\n${thinkingContent}` : ASSISTANT_THINKING_MARKER
+          main = `${thinkingBlock}\n\n${main}`
+        }
+        if (!finalPanelStates.hasToolPanel && lastPanelStates.hasToolPanel && lastPanelStates.toolContent) {
+          const separator = details ? `\n\n${details}` : ''
+          details = `${lastPanelStates.toolContent}${separator}`
+        }
+      }
+
+      const combinedBody = [main, details].filter(Boolean).join('\n\n').trim()
+      const combinedWithFooter = parsedFooter
+        ? (combinedBody ? `${combinedBody}\n\n${parsedFooter}` : parsedFooter)
+        : combinedBody
+      const combinedWithXml = xmlBlock
+        ? (combinedWithFooter ? `${combinedWithFooter}\n\n${xmlBlock}` : xmlBlock)
+        : combinedWithFooter
+
+      const state = currentMessageId && currentCardId && currentElementId
+        ? {
+            cardId: currentCardId,
+            elementId: currentElementId,
+            main,
+            details,
+            meta: parsedFooter,
+            showDetails: false,
+            showMeta: false,
+            sequence: currentSequence,
+            hasThinkingPanel: finalPanelStates.hasThinkingPanel || lastPanelStates?.hasThinkingPanel,
+            hasToolPanel: finalPanelStates.hasToolPanel || lastPanelStates?.hasToolPanel,
+            thinkingContent: finalPanelStates.thinkingContent || lastPanelStates?.thinkingContent,
+            toolContent: finalPanelStates.toolContent || lastPanelStates?.toolContent,
+          }
+        : null
+
+      const rendered = state ? buildAssistantCardText(state) : combinedWithXml
+      const truncated = truncateForCard(rendered)
+
+      if (currentMessageId) {
+        const ok = await updateMessage(
+          currentMessageId,
+          truncateForCard(combinedWithFooter),
+          "final",
+          undefined,
+          lastMessageParts || undefined,
+        )
+        if (!ok) {
+          await sendNewMessage(truncated, "final")
+        }
+      } else {
+        await sendNewMessage(truncated, "final")
+      }
+
+      const feishuClient = provider.getFeishuClient?.()
+      if (feishuClient && state && currentCardId) {
+        await feishuClient.updateAssistantCardEntityWithId?.(currentCardId, {
+          sequence: currentSequence,
+          text: state.main,
+          details: state.details,
+          meta: state.meta,
+          showDetails: state.showDetails,
+          showMeta: state.showMeta,
+        })
+        currentSequence += 1
+        state.sequence = currentSequence
+      }
+
+      if (state && currentMessageId) {
+        assistantCardStates.set(currentMessageId, state)
+      }
+      lastRenderedText = truncated
+    },
+    async fail(reason: string) {
+      const text = `⚠️ ${reason}`
+      if (currentMessageId) {
+        const ok = await updateMessage(currentMessageId, text, "final", "error")
+        if (ok) return
+      }
+      await sendNewMessage(text, "final")
+    },
+    detach() {
+      currentMessageId = null
+      currentCardId = null
+      currentElementId = null
+      lastRenderedText = ""
+      logWith(logger, "Stream sink detached; future replies will start a new card", "debug")
+    },
+    getMessageIds() {
+      return currentMessageId ? [currentMessageId] : []
+    },
+  }
+}
 
 export interface StreamSinkOptions {
   provider: MessageProvider
@@ -10,270 +233,5 @@ export interface StreamSinkOptions {
   throttleMs: number
   maxMessageChars: number
   mode: "update" | "append"
-  maxUpdateCount: number
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void
-}
-
-export function createFeishuStreamSink(options: StreamSinkOptions) {
-  const { provider, message, logger } = options
-  const updateSupported = typeof provider.updateMessage === "function"
-  let mode: "update" | "append" = updateSupported ? options.mode : "append"
-  let currentMessageId: string | null = null
-  let messageIds: string[] = []
-  let updateCount = 0
-  let lastRenderedText = ""
-
-  const logChunkStats = (stage: string, chunks: string[]) => {
-    if (!logger) return
-    const count = chunks.length
-    if (count === 0) {
-      logWith(logger, `Stream ${stage}: chunks=0`, "debug")
-      return
-    }
-    let total = 0
-    let max = 0
-    for (const chunk of chunks) {
-      const size = chunk.length
-      total += size
-      if (size > max) max = size
-    }
-    const avg = Math.round(total / count)
-    logWith(
-      logger,
-      `Stream ${stage}: chunks=${count} totalChars=${total} maxChunk=${max} avgChunk=${avg}`,
-      "debug",
-    )
-  }
-
-  const sendNewMessage = async (text: string): Promise<string> => {
-    if (provider.replyMessage) {
-      const result = await provider.replyMessage(message, { text })
-      return result.messageId
-    }
-    const result = await provider.sendMessage(
-      { channelId: message.channelId, threadId: message.threadId },
-      { text },
-    )
-    return result.messageId
-  }
-
-  const updateMessage = async (text: string): Promise<boolean> => {
-    if (!currentMessageId || !provider.updateMessage) return false
-    if (updateCount >= options.maxUpdateCount) {
-      mode = "append"
-      logWith(
-        logger,
-        `Stream update limit reached maxUpdateCount=${options.maxUpdateCount}; switching to append`,
-        "debug",
-      )
-      return false
-    }
-    const ok = await provider.updateMessage(currentMessageId, { text })
-    if (ok) {
-      updateCount += 1
-    } else {
-      mode = "append"
-      logWith(
-        logger,
-        `Stream update failed messageId=${currentMessageId}; switching to append`,
-        "debug",
-      )
-    }
-    return ok
-  }
-
-  const appendDelta = async (text: string) => {
-    if (!text) return
-    const chunks = splitMarkdownIntoChunks(text, options.maxMessageChars)
-    logWith(logger, `Stream appendDelta: deltaChars=${text.length}`, "debug")
-    logChunkStats("appendDelta", chunks)
-    for (const chunk of chunks) {
-      const id = await sendNewMessage(chunk)
-      messageIds.push(id)
-      currentMessageId = id
-      updateCount = 0
-    }
-  }
-
-  const renderText = async (text: string) => {
-    if (!text) return
-
-    if (mode === "append" || !updateSupported) {
-      const delta =
-        lastRenderedText && text.startsWith(lastRenderedText)
-          ? text.slice(lastRenderedText.length)
-          : text
-      logWith(
-        logger,
-        `Stream render append: totalChars=${text.length} deltaChars=${delta.length}`,
-        "debug",
-      )
-      await appendDelta(delta)
-      lastRenderedText = text
-      return
-    }
-
-    const chunks = splitMarkdownIntoChunks(text, options.maxMessageChars)
-    logWith(
-      logger,
-      `Stream render update: totalChars=${text.length} messages=${messageIds.length}`,
-      "debug",
-    )
-    logChunkStats("render", chunks)
-    if (chunks.length === 0) return
-
-    if (!currentMessageId) {
-      const id = await sendNewMessage(chunks[0])
-      currentMessageId = id
-      messageIds = [id]
-      updateCount = 0
-    }
-
-    const existingCount = messageIds.length
-    if (chunks.length > existingCount) {
-      const currentIndex = existingCount - 1
-      if (currentIndex >= 0) {
-        const ok = await updateMessage(chunks[currentIndex])
-        if (!ok) {
-          const delta =
-            lastRenderedText && text.startsWith(lastRenderedText)
-              ? text.slice(lastRenderedText.length)
-              : text
-          logWith(
-            logger,
-            `Stream update fallback: totalChars=${text.length} deltaChars=${delta.length}`,
-            "debug",
-          )
-          await appendDelta(delta)
-          lastRenderedText = text
-          return
-        }
-      }
-
-      for (let i = existingCount; i < chunks.length; i += 1) {
-        const id = await sendNewMessage(chunks[i])
-        messageIds.push(id)
-        currentMessageId = id
-        updateCount = 0
-      }
-    } else {
-      const ok = await updateMessage(chunks[chunks.length - 1])
-      if (!ok) {
-        const delta =
-          lastRenderedText && text.startsWith(lastRenderedText)
-            ? text.slice(lastRenderedText.length)
-            : text
-        logWith(
-          logger,
-          `Stream update fallback: totalChars=${text.length} deltaChars=${delta.length}`,
-          "debug",
-        )
-        await appendDelta(delta)
-        lastRenderedText = text
-        return
-      }
-    }
-
-    lastRenderedText = text
-  }
-
-  const throttled = createThrottledRenderer(
-    async (text) => {
-      const preview = sanitizeMarkdownForPreview(text)
-      await renderText(preview)
-    },
-    Math.max(0, options.throttleMs),
-  )
-
-  return {
-    async start() {
-      const placeholderId = await sendNewMessage("⏳ 生成中...")
-      currentMessageId = placeholderId
-      messageIds = [placeholderId]
-      updateCount = 0
-      lastRenderedText = ""
-      return placeholderId
-    },
-    async render(text: string) {
-      throttled.update(text)
-    },
-    async finalize(finalText: string, footer: string) {
-      await throttled.flush()
-      const combined = finalText.trim() ? `${finalText.trim()}\n\n${footer}` : footer
-
-      if (!combined) return
-
-      if (mode === "append" || !updateSupported) {
-        const delta =
-          lastRenderedText && combined.startsWith(lastRenderedText)
-            ? combined.slice(lastRenderedText.length)
-            : combined
-        logWith(
-          logger,
-          `Stream finalize append: totalChars=${combined.length} deltaChars=${delta.length}`,
-          "debug",
-        )
-        await appendDelta(delta)
-        lastRenderedText = combined
-        return
-      }
-
-      const chunks = splitMarkdownIntoChunks(combined, options.maxMessageChars)
-      logWith(
-        logger,
-        `Stream finalize update: totalChars=${combined.length} messages=${messageIds.length}`,
-        "debug",
-      )
-      logChunkStats("finalize", chunks)
-      if (chunks.length === 0) return
-
-      const existingCount = messageIds.length
-      if (existingCount === 0) {
-        const id = await sendNewMessage(chunks[0])
-        currentMessageId = id
-        messageIds = [id]
-        updateCount = 0
-      }
-
-      if (chunks.length > messageIds.length) {
-        for (let i = messageIds.length; i < chunks.length; i += 1) {
-          const id = await sendNewMessage(chunks[i])
-          messageIds.push(id)
-          currentMessageId = id
-          updateCount = 0
-        }
-      }
-
-      if (currentMessageId) {
-        const ok = await updateMessage(chunks[chunks.length - 1])
-        if (!ok) {
-          logWith(logger, "Finalize update failed, switching to append", "warn")
-          const delta =
-            lastRenderedText && combined.startsWith(lastRenderedText)
-              ? combined.slice(lastRenderedText.length)
-              : combined
-          await appendDelta(delta)
-        }
-      }
-
-      lastRenderedText = combined
-    },
-    async fail(reason: string) {
-      if (currentMessageId && provider.updateMessage) {
-        await provider.updateMessage(currentMessageId, { text: `⚠️ ${reason}` })
-        return
-      }
-      await sendNewMessage(`⚠️ ${reason}`)
-    },
-    detach() {
-      mode = "append"
-      currentMessageId = null
-      messageIds = []
-      updateCount = 0
-      logWith(logger, "Stream sink detached; future replies will append", "debug")
-    },
-    getMessageIds() {
-      return messageIds
-    },
-  }
 }

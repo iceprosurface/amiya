@@ -1,5 +1,6 @@
+import { upsertMessagePart, upsertMessageRenderCache, upsertToolRun } from "../database.js"
 import { getOpencodeClientV2 } from "../opencode.js"
-import { extractTextFromPromptResult } from "./format.js"
+import { buildAmiyaXmlFromParts, extractTextFromPromptResult } from "./format.js"
 import { isRecord, logWith } from "./utils.js"
 
 export interface StreamingControllerOptions {
@@ -105,6 +106,7 @@ export async function createStreamingController(
   >()
   let assistantMessageId: string | null = null
   let textCache = ""
+  let renderedPayload = ""
   let started = false
 
   const handleTextUpdate = async (text: string, isComplete: boolean) => {
@@ -134,9 +136,107 @@ export async function createStreamingController(
       .map((id) => bucket.parts.get(id))
       .filter((part): part is Record<string, unknown> => Boolean(part))
     const nextText = extractTextFromPromptResult({ data: { parts: orderedParts } })
-    if (nextText === textCache) return
-    textCache = nextText
-    await handleTextUpdate(textCache, false)
+    const xml = buildAmiyaXmlFromParts(orderedParts)
+    const combined = xml ? `${nextText}\n\n${xml}` : nextText
+    if (combined === renderedPayload) return
+    renderedPayload = combined
+    if (nextText !== textCache) {
+      textCache = nextText
+      upsertMessageRenderCache({
+        sessionId: options.sessionId,
+        messageId: assistantMessageId,
+        renderedText: textCache,
+      })
+    }
+    await handleTextUpdate(renderedPayload, false)
+  }
+
+  const persistMessagePart = (
+    part: Record<string, unknown>,
+    messageId: string,
+    partId: string,
+    orderIndex: number,
+  ) => {
+    const type = typeof part.type === "string" ? part.type : "unknown"
+    const record = {
+      partId,
+      sessionId: options.sessionId,
+      messageId,
+      orderIndex,
+      type,
+      text: typeof part.text === "string" ? part.text : undefined,
+      reasoning: typeof part.reasoning === "string" ? part.reasoning : undefined,
+      subtaskDescription: typeof part.description === "string" ? part.description : undefined,
+      subtaskPrompt: typeof part.prompt === "string" ? part.prompt : undefined,
+      subtaskAgent: typeof part.agent === "string" ? part.agent : undefined,
+      startedAt:
+        isRecord(part.time) && typeof part.time.start === "number" ? part.time.start : undefined,
+      completedAt:
+        isRecord(part.time) && typeof part.time.end === "number" ? part.time.end : undefined,
+    }
+
+    if (type === "tool") {
+      const toolName = typeof part.tool === "string" ? part.tool : "tool"
+      const state = isRecord(part.state) ? part.state : undefined
+      const status = typeof state?.status === "string" ? state.status : undefined
+      const title = typeof state?.title === "string" ? state.title : undefined
+      const input = state?.input
+      const inputText =
+        typeof input === "string"
+          ? input
+          : input !== undefined
+            ? JSON.stringify(input)
+            : undefined
+      const outputText = typeof state?.output === "string" ? state.output : undefined
+      const errorText = typeof state?.error === "string" ? state.error : undefined
+      upsertMessagePart({
+        ...record,
+        toolName,
+        toolStatus: status,
+        toolTitle: title,
+        inputText,
+        outputText,
+        errorText,
+      })
+      return
+    }
+
+    upsertMessagePart(record)
+  }
+
+  const persistToolRunFromPart = (
+    part: Record<string, unknown>,
+    messageId: string,
+    partId: string,
+  ) => {
+    const toolName = typeof part.tool === "string" ? part.tool : "tool"
+    if (toolName === "question") return
+    const state = isRecord(part.state) ? part.state : undefined
+    if (!state) return
+    const status = typeof state.status === "string" ? state.status : "unknown"
+    const title = typeof state.title === "string" ? state.title : undefined
+    const input = state.input
+    const inputJson =
+      typeof input === "string"
+        ? input
+        : input !== undefined
+          ? JSON.stringify(input)
+          : undefined
+    const outputText = typeof state.output === "string" ? state.output : undefined
+    const errorText = typeof state.error === "string" ? state.error : undefined
+
+    upsertToolRun({
+      partId,
+      sessionId: options.sessionId,
+      threadId: options.threadId,
+      messageId,
+      toolName,
+      status,
+      title,
+      inputJson,
+      outputText,
+      errorText,
+    })
   }
 
   const shouldAcceptAssistant = (createdAt: number | undefined) => {
@@ -180,7 +280,7 @@ export async function createStreamingController(
           }
         }
         if (assistantMessageId && info.id === assistantMessageId && info.time?.completed) {
-          await handleTextUpdate(textCache, true)
+          await handleTextUpdate(renderedPayload || textCache, true)
         }
       }
       return
@@ -234,6 +334,12 @@ export async function createStreamingController(
       bucket.parts.set(partId, nextPart)
       if (!bucket.order.includes(partId)) {
         bucket.order.push(partId)
+      }
+      const orderIndex = bucket.order.indexOf(partId)
+      persistMessagePart(nextPart, messageId, partId, orderIndex)
+
+      if (part.type === "tool") {
+        persistToolRunFromPart(nextPart, messageId, partId)
       }
 
       if (assistantMessageId && messageId === assistantMessageId) {

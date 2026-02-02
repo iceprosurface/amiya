@@ -9,6 +9,7 @@ export interface FeishuConfig {
   requireUserWhitelist?: boolean
   debug?: boolean
   model?: string
+  useCardMessages?: boolean
   streaming?: StreamingConfig
   toolOutputFileThreshold?: number
 }
@@ -18,7 +19,6 @@ export interface StreamingConfig {
   mode?: 'update' | 'append'
   throttleMs?: number
   maxMessageChars?: number
-  maxUpdateCount?: number
 }
 
 export function validateConfig(config: unknown): config is FeishuConfig {
@@ -29,6 +29,7 @@ export function validateConfig(config: unknown): config is FeishuConfig {
   if (typeof c.appId !== 'string' || typeof c.appSecret !== 'string') return false
   if (c.appId.length === 0 || c.appSecret.length === 0) return false
   if (typeof c.model !== 'undefined' && typeof c.model !== 'string') return false
+  if (typeof c.useCardMessages !== 'undefined' && typeof c.useCardMessages !== 'boolean') return false
   if (typeof c.toolOutputFileThreshold !== 'undefined' && typeof c.toolOutputFileThreshold !== 'number') {
     return false
   }
@@ -39,7 +40,6 @@ export function validateConfig(config: unknown): config is FeishuConfig {
     if (typeof s.mode !== 'undefined' && s.mode !== 'update' && s.mode !== 'append') return false
     if (typeof s.throttleMs !== 'undefined' && typeof s.throttleMs !== 'number') return false
     if (typeof s.maxMessageChars !== 'undefined' && typeof s.maxMessageChars !== 'number') return false
-    if (typeof s.maxUpdateCount !== 'undefined' && typeof s.maxUpdateCount !== 'number') return false
   }
   return true
 }
