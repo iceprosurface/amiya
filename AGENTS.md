@@ -32,6 +32,10 @@
 - Keep `description` concise and imperative.
 - PRs should include: a short summary, test/verification steps, and any config changes or `.amiya` implications.
 
+## Branching Workflow
+- Create a new branch before making changes.
+- When switching/creating branches, prefer basing from the remote `origin/master` (e.g., `git fetch origin` then `git switch -c <branch> origin/master`).
+
 ## Security & Configuration Tips
 - Treat `.amiya/feishu.json` and `.amiya/source.md` as sensitive and local-only.
 - Do not commit `.amiya/` contents; `.gitignore` already excludes it.
