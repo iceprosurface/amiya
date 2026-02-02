@@ -447,9 +447,11 @@ export function splitFooterLines(text: string): { body: string; footer?: string 
   while (lines.length > 0) {
     const last = lines[lines.length - 1]
     if (
-      last.startsWith('版本 ')
+      last.startsWith('耗时 ')
+      || last.startsWith('上下文 ')
       || last.startsWith('会话 ')
       || last.startsWith('模型 ')
+      || last.startsWith('版本 ')
       || last.includes('完成')
       || last.includes('上下文')
     ) {
