@@ -3,6 +3,7 @@ import type { SessionHandlerOptions } from "../session-handler.js";
 import { logWith } from "../utils.js";
 import { handleAbort } from "./abort.js";
 import { handleAgent } from "./agent.js";
+import { handleChannelModel } from "./channel-model.js";
 import { handleCompact } from "./compact.js";
 import { handleContext } from "./context.js";
 import { handleHelp } from "./help.js";
@@ -27,6 +28,7 @@ const handlers: Record<string, CommandHandler> = {
   dir: handleProject,
   "list-sessions": handleListSessions,
   model: handleModel,
+  "channel-model": handleChannelModel,
   agent: handleAgent,
   compact: handleCompact,
   "mention-required": handleMentionRequired,

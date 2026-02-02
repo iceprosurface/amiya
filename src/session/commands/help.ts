@@ -16,6 +16,7 @@ export const handleHelp: CommandHandler = async (message, _command, options) => 
     "",
     "**模型与代理**",
     "- `/model <提供商/模型|clear>` 设置/清除模型",
+    "- `/channel-model <提供商/模型>` 设置频道默认模型",
     "- `/agent <名称>` 设置 agent",
     "",
     "**项目目录**",
