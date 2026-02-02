@@ -1,6 +1,6 @@
 import type { Config, OpencodeClient } from "@opencode-ai/sdk";
 import fs from "node:fs";
-import type { IncomingMessage, MessageProvider } from "../types.js";
+
 import {
   getChannelAgent,
   getChannelDirectory,
@@ -10,19 +10,26 @@ import {
   getThreadSession,
   setChannelDirectory,
   setThreadSession,
+  updateQuestionRequestCard,
+  upsertQuestionRequest,
 } from "../database.js";
-import { initializeOpencodeForDirectory } from "../opencode.js";
-import { getOpencodeSystemMessage } from "../system-message.js";
 import { OpenCodeApiError } from "../errors.js";
+import { initializeOpencodeForDirectory } from "../opencode.js";
+import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
+import { getOpencodeSystemMessage } from "../system-message.js";
+import type { IncomingMessage, MessageProvider } from "../types.js";
+import { createFeishuStreamSink } from "./feishu-stream-sink.js";
+import {
+  extractPartsFromPromptResult,
+  extractTextFromPromptResult,
+  extractTextWithAttachmentsFromPromptResult,
+  type ToolAttachment,
+} from "./format.js";
 import { sendReply } from "./messaging.js";
-import { activeRequests, activeStreams, pendingQuestions, pendingPermissions } from "./state.js";
-import { extractPartsFromPromptResult, extractTextFromPromptResult } from "./format.js";
+import { createStreamingController } from "./opencode-streaming.js";
+import { activeRequests, activeStreams, pendingPermissions, pendingQuestions } from "./state.js";
 import { buildFooter } from "./stats.js";
 import { buildFailureReport, describeError, isRecord, logWith, toUserErrorMessage } from "./utils.js";
-import { createStreamingController } from "./opencode-streaming.js";
-import { createFeishuStreamSink } from "./feishu-stream-sink.js";
-import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
-import { upsertQuestionRequest, updateQuestionRequestCard } from "../database.js";
 
 export function parseModelString(
   model: string,
@@ -122,6 +129,46 @@ type PermissionRequestSpec = {
   permission: string;
   patterns: string[];
 };
+
+async function uploadToolAttachments(
+  attachments: ToolAttachment[],
+  provider: MessageProvider,
+  message: IncomingMessage,
+  logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void,
+): Promise<void> {
+  if (attachments.length === 0) return;
+  if (provider.id !== "feishu") return;
+  const client = provider.getFeishuClient?.();
+  if (!client || typeof client.uploadTextFile !== "function" || typeof client.replyFileMessageWithId !== "function") {
+    return;
+  }
+  const preferThread = Boolean(message.threadId);
+  for (const attachment of attachments) {
+    const fileKey = await client.uploadTextFile({
+      content: attachment.content,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+    });
+    if (!fileKey) {
+      logWith(logger, `Upload tool output failed: ${attachment.fileName}`, "warn");
+      await sendReply(
+        provider,
+        message,
+        `⚠️ 输出过长，附件上传失败，已省略：${attachment.fileName}`,
+      );
+      continue;
+    }
+    let messageId = await client.replyFileMessageWithId(message.messageId, fileKey, {
+      replyInThread: preferThread,
+    });
+    if (!messageId && preferThread) {
+      messageId = await client.replyFileMessageWithId(message.messageId, fileKey);
+    }
+    if (!messageId) {
+      logWith(logger, `Reply file message failed: ${attachment.fileName}`, "warn");
+    }
+  }
+}
 
 function extractQuestionSpecs(result: unknown): QuestionSpec[] {
   const parts = extractPartsFromPromptResult(result);
@@ -624,6 +671,7 @@ export async function sendPrompt({
   logger,
   opencodeConfig,
   streaming,
+  toolOutputFileThreshold,
 }: {
   message: IncomingMessage;
   provider: MessageProvider;
@@ -631,6 +679,7 @@ export async function sendPrompt({
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void;
   opencodeConfig?: Config;
   streaming?: StreamingConfig;
+  toolOutputFileThreshold?: number;
 }): Promise<void> {
   const directory = resolveAccessibleDirectory(
     message.channelId,
@@ -847,7 +896,20 @@ export async function sendPrompt({
       throw new OpenCodeApiError(status, errorMessage);
     }
 
-    const replyText = extractTextFromPromptResult(response);
+    const feishuClient = provider.id === "feishu" ? provider.getFeishuClient?.() : null;
+    const supportsFileUpload =
+      provider.id === "feishu" &&
+      feishuClient &&
+      typeof feishuClient.uploadTextFile === "function" &&
+      typeof feishuClient.replyFileMessageWithId === "function";
+    const toolThreshold =
+      typeof toolOutputFileThreshold === "number" ? toolOutputFileThreshold : 8000;
+    const { text: replyText, attachments } = supportsFileUpload
+      ? extractTextWithAttachmentsFromPromptResult(response, {
+        maxInlineChars: toolThreshold,
+        attachmentTools: ["bash"],
+      })
+      : { text: extractTextFromPromptResult(response), attachments: [] };
     if (!questionAsked) {
       await sendQuestionCards(response, {
         provider,
@@ -865,6 +927,7 @@ export async function sendPrompt({
       getClient,
     });
 
+    await uploadToolAttachments(attachments, provider, message, logger);
     if (streamSink) {
       streamController?.stop();
       await streamSink.finalize(replyText, footer);

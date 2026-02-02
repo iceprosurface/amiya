@@ -36,63 +36,58 @@ export function extractTextFromPromptResult(result: unknown): string {
   let hasReasoning = false;
 
   for (const part of parts) {
-    if (!isRecord(part)) continue;
-    const type = part.type;
+    if (!isRecord(part)) {
+      // skip
+    } else {
+      const type = part.type;
 
-    if (type === "text") {
-      const text = typeof part.text === "string" ? part.text : "";
-      if (text) textParts.push(text);
-      continue;
-    }
+      if (type === "text") {
+        const text = typeof part.text === "string" ? part.text : "";
+        if (text) textParts.push(text);
+      } else if (type === "reasoning") {
+        hasReasoning = true;
+      } else if (type === "subtask") {
+        const description =
+          typeof part.description === "string" ? part.description : "";
+        const agent = typeof part.agent === "string" ? part.agent : "";
+        const prompt = typeof part.prompt === "string" ? part.prompt : "";
+        const label = description || prompt || "子任务";
+        const agentInfo = agent ? `（agent: ${agent}）` : "";
+        subtaskLines.push(`- ${label}${agentInfo}`);
+      } else if (type === "tool") {
+        const toolName = typeof part.tool === "string" ? part.tool : "tool";
+        if (toolName !== "question") {
+          const state = isRecord(part.state) ? part.state : undefined;
+          if (!state) {
+            // ignore
+          } else {
+            const status = typeof state.status === "string" ? state.status : "unknown";
 
-    if (type === "reasoning") {
-      hasReasoning = true;
-      continue;
-    }
+            const formatToolBlock = (label: string, body?: string): string => {
+              if (body && body.trim().length > 0) {
+                return `> ${label}\n\n\`\`\`\n${body}\n\`\`\``;
+              }
+              return `> ${label}`;
+            };
 
-    if (type === "subtask") {
-      const description =
-        typeof part.description === "string" ? part.description : "";
-      const agent = typeof part.agent === "string" ? part.agent : "";
-      const prompt = typeof part.prompt === "string" ? part.prompt : "";
-      const label = description || prompt || "子任务";
-      const agentInfo = agent ? `（agent: ${agent}）` : "";
-      subtaskLines.push(`- ${label}${agentInfo}`);
-      continue;
-    }
-
-    if (type === "tool") {
-      const toolName = typeof part.tool === "string" ? part.tool : "tool";
-      if (toolName === "question") {
-        continue;
-      }
-      const state = isRecord(part.state) ? part.state : undefined;
-      if (!state) continue;
-      const status = typeof state.status === "string" ? state.status : "unknown";
-
-      const formatToolBlock = (label: string, body?: string): string => {
-        if (body && body.trim().length > 0) {
-          return `> ${label}\n\n\`\`\`\n${body}\n\`\`\``;
+            if (status === "completed") {
+              const output = typeof state.output === "string" ? state.output : "";
+              toolOutputs.push(formatToolBlock(`[#${toolName}]`, output));
+            } else if (status === "error") {
+              const error = typeof state.error === "string" ? state.error : "unknown";
+              toolOutputs.push(formatToolBlock(`[#${toolName}] ❌`, error));
+            } else if (status === "running" || status === "pending") {
+              const input = isRecord(state.input) ? JSON.stringify(state.input) : "";
+              const title =
+                typeof state.title === "string" && state.title.length > 0
+                  ? state.title
+                  : "";
+              const header = title ? `${title} (${status})` : status;
+              toolOutputs.push(formatToolBlock(`[#${toolName}] ${header}`, input));
+            }
+          }
         }
-        return `> ${label}`;
-      };
-
-      if (status === "completed") {
-        const output = typeof state.output === "string" ? state.output : "";
-        toolOutputs.push(formatToolBlock(`[#${toolName}]`, output));
-      } else if (status === "error") {
-        const error = typeof state.error === "string" ? state.error : "unknown";
-        toolOutputs.push(formatToolBlock(`[#${toolName}] ❌`, error));
-      } else if (status === "running" || status === "pending") {
-        const input = isRecord(state.input) ? JSON.stringify(state.input) : "";
-        const title =
-          typeof state.title === "string" && state.title.length > 0
-            ? state.title
-            : "";
-        const header = title ? `${title} (${status})` : status;
-        toolOutputs.push(formatToolBlock(`[#${toolName}] ${header}`, input));
       }
-      continue;
     }
   }
 
@@ -115,4 +110,130 @@ export function extractTextFromPromptResult(result: unknown): string {
   }
 
   return sections.join("\n\n").trim();
+}
+
+export type ToolAttachment = {
+  tool: string;
+  fileName: string;
+  content: string;
+  mimeType: string;
+};
+
+export type TextWithAttachments = {
+  text: string;
+  attachments: ToolAttachment[];
+};
+
+export function extractTextWithAttachmentsFromPromptResult(
+  result: unknown,
+  options?: {
+    maxInlineChars?: number;
+    attachmentTools?: string[];
+  },
+): TextWithAttachments {
+  const parts = extractPartsFromPromptResult(result);
+  if (parts.length === 0) return { text: "", attachments: [] };
+
+  const maxInlineChars = options?.maxInlineChars ?? 8000;
+  const attachmentTools = options?.attachmentTools ?? ["bash"];
+  const textParts: string[] = [];
+  const toolOutputs: string[] = [];
+  const subtaskLines: string[] = [];
+  const attachments: ToolAttachment[] = [];
+  let hasReasoning = false;
+
+  const formatToolBlock = (label: string, body?: string): string => {
+    if (body && body.trim().length > 0) {
+      return `> ${label}\n\n\`\`\`\n${body}\n\`\`\``;
+    }
+    return `> ${label}`;
+  };
+
+  const shouldAttach = (toolName: string, body: string) =>
+    attachmentTools.includes(toolName) && body.length > maxInlineChars;
+
+  const buildAttachmentName = (toolName: string, index: number) =>
+    `${toolName}-output-${index}.log`;
+
+  for (const part of parts) {
+    if (!isRecord(part)) {
+      // skip
+    } else {
+      const type = part.type;
+
+      if (type === "text") {
+        const text = typeof part.text === "string" ? part.text : "";
+        if (text) textParts.push(text);
+      } else if (type === "reasoning") {
+        hasReasoning = true;
+      } else if (type === "subtask") {
+        const description =
+          typeof part.description === "string" ? part.description : "";
+        const agent = typeof part.agent === "string" ? part.agent : "";
+        const prompt = typeof part.prompt === "string" ? part.prompt : "";
+        const label = description || prompt || "子任务";
+        const agentInfo = agent ? `（agent: ${agent}）` : "";
+        subtaskLines.push(`- ${label}${agentInfo}`);
+      } else if (type === "tool") {
+        const toolName = typeof part.tool === "string" ? part.tool : "tool";
+        if (toolName !== "question") {
+          const state = isRecord(part.state) ? part.state : undefined;
+          if (!state) {
+            // ignore
+          } else {
+            const status = typeof state.status === "string" ? state.status : "unknown";
+
+            if (status === "completed") {
+              const output = typeof state.output === "string" ? state.output : "";
+              if (output && shouldAttach(toolName, output)) {
+                const fileName = buildAttachmentName(toolName, attachments.length + 1);
+                attachments.push({
+                  tool: toolName,
+                  fileName,
+                  content: output,
+                  mimeType: "text/plain",
+                });
+                toolOutputs.push(
+                  `> [#${toolName}] 输出过长，已上传为附件：${fileName}`,
+                );
+              } else {
+                toolOutputs.push(formatToolBlock(`[#${toolName}]`, output));
+              }
+            } else if (status === "error") {
+              const error = typeof state.error === "string" ? state.error : "unknown";
+              toolOutputs.push(formatToolBlock(`[#${toolName}] ❌`, error));
+            } else if (status === "running" || status === "pending") {
+              const input = isRecord(state.input) ? JSON.stringify(state.input) : "";
+              const title =
+                typeof state.title === "string" && state.title.length > 0
+                  ? state.title
+                  : "";
+              const header = title ? `${title} (${status})` : status;
+              toolOutputs.push(formatToolBlock(`[#${toolName}] ${header}`, input));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const sections: string[] = [];
+  const text = textParts.join("\n").trim();
+  if (text) sections.push(text);
+
+  if (subtaskLines.length > 0) {
+    sections.push("— 子任务 —");
+    sections.push(subtaskLines.join("\n"));
+  }
+
+  if (toolOutputs.length > 0) {
+    sections.push("— 子任务/工具输出 —");
+    sections.push(toolOutputs.join("\n"));
+  }
+
+  if (hasReasoning) {
+    sections.unshift("— 思考中 —");
+  }
+
+  return { text: sections.join("\n\n").trim(), attachments };
 }

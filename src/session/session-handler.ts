@@ -33,6 +33,7 @@ export type SessionHandlerOptions = {
   ) => void;
   opencodeConfig?: Config;
   streaming?: StreamingConfig;
+  toolOutputFileThreshold?: number;
   requireUserWhitelist?: boolean;
   adminUserIds?: string[];
   adminChatId?: string;
@@ -327,6 +328,7 @@ export async function handleIncomingMessage(
       logger: options.logger,
       opencodeConfig: options.opencodeConfig,
       streaming: streamingOverride,
+      toolOutputFileThreshold: options.toolOutputFileThreshold,
     });
   } catch (error) {
     const described = describeError(error);
@@ -358,6 +360,7 @@ export async function handleIncomingMessage(
         logger: options.logger,
         opencodeConfig: options.opencodeConfig,
         streaming: options.streaming,
+        toolOutputFileThreshold: options.toolOutputFileThreshold,
       }),
       options.logger,
     );
