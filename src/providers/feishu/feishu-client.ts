@@ -6,12 +6,18 @@ export function createFeishuClient(
   config: FeishuConfig,
   logger?: (message: string, level?: 'debug' | 'info' | 'warn' | 'error') => void,
 ) {
+  const fetcher = globalThis.fetch as unknown as (...args: unknown[]) => Promise<unknown>
+  const FormDataCtor = globalThis.FormData as unknown as (new () => {
+    set: (name: string, value: unknown, fileName?: string) => void
+  })
+  const BlobCtor = globalThis.Blob as unknown as (new (parts: unknown[], options?: { type?: string }) => unknown)
   const client = new lark.Client({
     appId: config.appId,
     appSecret: config.appSecret,
     domain: config.useLark ? lark.Domain.Lark : lark.Domain.Feishu,
     loggerLevel: config.debug ? lark.LoggerLevel.debug : lark.LoggerLevel.info,
   })
+  const baseUrl = config.useLark ? 'https://open.larksuite.com' : 'https://open.feishu.cn'
 
   const log = (message: string, level: 'debug' | 'info' | 'warn' | 'error' = 'info') => {
     if (logger) {
@@ -23,32 +29,22 @@ export function createFeishuClient(
 
   let cachedBotUserId: string | null = null
 
-  async function getBotUserId(): Promise<string | null> {
-    if (cachedBotUserId) {
-      return cachedBotUserId
-    }
+  const extractTenantToken = (result: unknown): string | null => {
+    if (!result || typeof result !== 'object') return null
+    const record = result as Record<string, unknown>
+    const data = record.data as Record<string, unknown> | undefined
+    const directToken = record.tenant_access_token
+    const nestedToken = data?.tenant_access_token
+    const resolved = typeof nestedToken === 'string' && nestedToken.length > 0
+      ? nestedToken
+      : typeof directToken === 'string' && directToken.length > 0
+        ? directToken
+        : null
+    return resolved
+  }
 
-    if (config.botUserId) {
-      cachedBotUserId = config.botUserId
-      log('Using configured botUserId', 'debug')
-      return cachedBotUserId
-    }
-
+  async function fetchTenantAccessToken(): Promise<string | null> {
     try {
-      const extractTenantToken = (result: unknown): string | null => {
-        if (!result || typeof result !== 'object') return null
-        const record = result as Record<string, unknown>
-        const data = record.data as Record<string, unknown> | undefined
-        const directToken = record.tenant_access_token
-        const nestedToken = data?.tenant_access_token
-        const resolved = typeof nestedToken === 'string' && nestedToken.length > 0
-          ? nestedToken
-          : typeof directToken === 'string' && directToken.length > 0
-            ? directToken
-            : null
-        return resolved
-      }
-
       const tokenResult = await client.auth.v3.tenantAccessToken.internal({
         data: {
           app_id: config.appId,
@@ -73,6 +69,28 @@ export function createFeishuClient(
         log('No tenant_access_token in response', 'warn')
         return null
       }
+
+      return tenantToken
+    } catch (error) {
+      log(`Failed to fetch tenant_access_token: ${error}`, 'warn')
+      return null
+    }
+  }
+
+  async function getBotUserId(): Promise<string | null> {
+    if (cachedBotUserId) {
+      return cachedBotUserId
+    }
+
+    if (config.botUserId) {
+      cachedBotUserId = config.botUserId
+      log('Using configured botUserId', 'debug')
+      return cachedBotUserId
+    }
+
+    try {
+      const tenantToken = await fetchTenantAccessToken()
+      if (!tenantToken) return null
 
       const botInfoResult = await client.request({
         method: 'GET',
@@ -128,6 +146,15 @@ export function createFeishuClient(
     }
 
     return null
+  }
+
+  function extractFileKey(result: unknown): string | null {
+    if (!result || typeof result !== 'object') return null
+    const record = result as Record<string, unknown>
+    const data = record.data
+    if (!data || typeof data !== 'object') return null
+    const fileKey = (data as Record<string, unknown>).file_key
+    return typeof fileKey === 'string' && fileKey.length > 0 ? fileKey : null
   }
 
   const buildApprovalCardContent = (params: {
@@ -413,6 +440,92 @@ export function createFeishuClient(
   }
 
   return {
+    async uploadTextFile(params: {
+      content: string
+      fileName: string
+      fileType?: string
+      mimeType?: string
+    }): Promise<string | null> {
+      try {
+        if (!FormDataCtor || !BlobCtor || !fetcher) {
+          log('File upload requires fetch/FormData/Blob support', 'warn')
+          return null
+        }
+        const tenantToken = await fetchTenantAccessToken()
+        if (!tenantToken) return null
+        const form = new FormDataCtor()
+        form.set('file_type', params.fileType ?? 'stream')
+        form.set('file_name', params.fileName)
+        const blob = new BlobCtor([params.content], {
+          type: params.mimeType ?? 'text/plain',
+        })
+        form.set('file', blob, params.fileName)
+        const response = await fetcher(`${baseUrl}/open-apis/im/v1/files`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tenantToken}`,
+          },
+          body: form,
+        }) as { ok?: boolean; status?: number; statusText?: string; json?: () => Promise<unknown> }
+        if (!response || response.ok === false) {
+          const status = response?.status ?? 'unknown'
+          const statusText = response?.statusText ?? ''
+          log(`Upload file failed: ${status} ${statusText}`, 'warn')
+          return null
+        }
+        const payload = (await response.json?.().catch(() => null)) as unknown
+        const fileKey = extractFileKey(payload)
+        if (!fileKey) {
+          log('Upload file response missing file_key', 'warn')
+          return null
+        }
+        return fileKey
+      } catch (error) {
+        log(`Upload file failed: ${error}`, 'error')
+        return null
+      }
+    },
+
+    async sendFileMessage(chatId: string, fileKey: string): Promise<string | null> {
+      try {
+        const result: unknown = await client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: chatId,
+            msg_type: 'file',
+            content: JSON.stringify({ file_key: fileKey }),
+          },
+        })
+        return extractMessageId(result)
+      } catch (error) {
+        log(`Send file message failed: ${error}`, 'error')
+        return null
+      }
+    },
+
+    async replyFileMessageWithId(
+      messageId: string,
+      fileKey: string,
+      options?: { replyInThread?: boolean },
+    ): Promise<string | null> {
+      try {
+        const params: Parameters<typeof client.im.message.reply>[0] = {
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'file',
+            content: JSON.stringify({ file_key: fileKey }),
+          },
+        }
+        if (options?.replyInThread) {
+          ; (params.data as Record<string, unknown>).reply_in_thread = true
+        }
+        const result: unknown = await client.im.message.reply(params)
+        return extractMessageId(result)
+      } catch (error) {
+        log(`Reply file message failed: ${error}`, 'error')
+        return null
+      }
+    },
     async sendTextMessage(chatId: string, text: string): Promise<boolean> {
       try {
         await client.im.message.create({
