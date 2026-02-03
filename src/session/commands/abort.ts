@@ -15,6 +15,7 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
   active.controller.abort(new Error("abort"));
   const directory = resolveAccessibleDirectory(
     message.channelId,
+    message.userId,
     options.projectDirectory,
     options.logger,
   );
