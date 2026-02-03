@@ -35,6 +35,7 @@
 ## Branching Workflow
 - Create a new branch before making changes.
 - When switching/creating branches, prefer basing from the remote `origin/master` (e.g., `git fetch origin` then `git switch -c <branch> origin/master`).
+- Do not push directly to `master`. If a direct push is detected, first switch to a new branch named after the change (based on the commit content), then push that branch.
 
 ## Security & Configuration Tips
 - Treat `.amiya/feishu.json` and `.amiya/source.md` as sensitive and local-only.
