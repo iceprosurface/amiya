@@ -898,6 +898,9 @@ export async function sendPrompt({
 
     let streamController: { start: () => void; stop: () => void } | null = null;
     let streamSink: ReturnType<typeof createFeishuStreamSink> | null = null;
+    let streamingEnabled = false;
+    let streamTimeoutGraceMs = 900000;
+    let deferStreamStop = false;
     let questionAsked = false;
 
   try {
@@ -920,10 +923,14 @@ export async function sendPrompt({
     const parts = [{ type: "text" as const, text: message.text }];
     const promptStartedAt = Date.now();
     const streamingConfig = streaming || {};
-    const streamingEnabled =
+    streamingEnabled =
       streamingConfig.enabled === true &&
       provider.id === "feishu" &&
       typeof provider.updateMessage === "function";
+    streamTimeoutGraceMs =
+      typeof streamingConfig.timeoutGraceMs === "number"
+        ? streamingConfig.timeoutGraceMs
+        : 900000;
 
     try {
       if (streamingEnabled) {
@@ -1121,7 +1128,9 @@ export async function sendPrompt({
         || record.code === "UND_ERR_HEADERS_TIMEOUT"
       );
     };
-    if (isHeadersTimeout(cause) || described.summary.includes("HeadersTimeoutError")) {
+    const isPromptHeadersTimeout =
+      isHeadersTimeout(cause) || described.summary.includes("HeadersTimeoutError");
+    if (isPromptHeadersTimeout) {
       logWith(
         logger,
         t("opencode.requestTimeout"),
@@ -1137,11 +1146,36 @@ export async function sendPrompt({
       logWith(logger, described.stack, "debug");
     }
 
-    if (streamController) {
-      streamController.stop();
-    }
-    if (streamSink) {
-      await streamSink.fail(toUserErrorMessage(error));
+    const shouldDeferStreamStop =
+      streamingEnabled &&
+      Boolean(streamController) &&
+      Boolean(streamSink) &&
+      isPromptHeadersTimeout;
+
+    if (shouldDeferStreamStop) {
+      deferStreamStop = true;
+      const graceMs = Math.max(0, Math.min(streamTimeoutGraceMs, 900000));
+      logWith(
+        logger,
+        `Prompt failed; keep streaming for ${graceMs}ms before failing session=${sessionId} directory=${directory}`,
+        "warn",
+      );
+      setTimeout(() => {
+        void (async () => {
+          streamController?.stop();
+          if (streamSink) {
+            await streamSink.fail(t("opencode.requestTimeout"));
+          }
+          activeStreams.delete(message.threadId);
+        })();
+      }, graceMs);
+    } else {
+      if (streamController) {
+        streamController.stop();
+      }
+      if (streamSink) {
+        await streamSink.fail(toUserErrorMessage(error));
+      }
     }
 
     const report = buildFailureReport({
@@ -1154,9 +1188,11 @@ export async function sendPrompt({
     await sendReply(provider, message, `✗ ${toUserErrorMessage(error)}\n\n${report}`);
   } finally {
     activeRequests.delete(message.threadId);
-    if (streamController) {
-      streamController.stop();
+    if (!deferStreamStop) {
+      if (streamController) {
+        streamController.stop();
+      }
+      activeStreams.delete(message.threadId);
     }
-    activeStreams.delete(message.threadId);
   }
 }
