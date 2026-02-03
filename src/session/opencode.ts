@@ -844,7 +844,7 @@ export async function sendPrompt({
   streaming?: StreamingConfig;
   toolOutputFileThreshold?: number;
 }): Promise<void> {
-  const workspaceDirectory = resolveWorkspaceDirectory(message.userId, logger);
+  const workspaceDirectory = resolveWorkspaceDirectory(message.channelId, logger);
   const directory = workspaceDirectory || resolveAccessibleDirectory(
     message.channelId,
     projectDirectory,

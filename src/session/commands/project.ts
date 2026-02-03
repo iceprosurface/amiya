@@ -9,12 +9,11 @@ export const handleProject: CommandHandler = async (message, command, options) =
   const { provider } = options;
   const rawArg = command.args.join(" ").trim();
   if (!rawArg) {
-    const directory = resolveAccessibleDirectory(
-      message.channelId,
-      message.userId,
-      options.projectDirectory,
-      options.logger,
-    );
+  const directory = resolveAccessibleDirectory({
+    channelId: message.channelId,
+    projectDirectory: options.projectDirectory,
+    logger: options.logger,
+  });
     await sendReply(
       provider,
       message,

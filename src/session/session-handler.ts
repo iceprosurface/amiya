@@ -83,7 +83,7 @@ export type SessionHandlerOptions = {
     reply: "once" | "always" | "reject";
   };
   workspaceAction?: {
-    action: "bind" | "join-approve" | "join-reject";
+    action: "bind" | "bind-approve" | "bind-reject" | "join-approve" | "join-reject";
     workspaceName?: string;
     requestId?: string;
   };

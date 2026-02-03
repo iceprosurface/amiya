@@ -1,4 +1,4 @@
-import { getUserWorkspace, listWorkspaces } from "../../database.js";
+import { getChannelWorkspace, listWorkspaces } from "../../database.js";
 import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import { handleWorkspaceAction } from "../workspace.js";
@@ -8,7 +8,7 @@ export const handleWorkspace: CommandHandler = async (message, command, options)
   const { provider } = options;
   const rawArg = command.args.join(" ").trim();
   if (!rawArg) {
-    const workspaceName = getUserWorkspace(message.userId);
+    const workspaceName = getChannelWorkspace(message.channelId);
     if (!workspaceName) {
       await sendReply(provider, message, t("commands.workspaceNone"));
       return true;

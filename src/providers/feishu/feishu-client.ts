@@ -979,6 +979,72 @@ export function createFeishuClient(
     }
   }
 
+  const buildWorkspaceBindApprovalCardContent = (params: {
+    requestId: string
+    workspaceName: string
+    requesterUserId: string
+    requesterUserName?: string
+    channelId: string
+  }) => {
+    const requester = params.requesterUserName || params.requesterUserId
+    return {
+      config: {
+        wide_screen_mode: true,
+        update_multi: true,
+      },
+      header: {
+        template: 'orange',
+        title: {
+          content: t('feishu.workspaceBindApprovalTitle'),
+          tag: 'plain_text',
+        },
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: t('feishu.workspaceBindApprovalBody', {
+              name: params.workspaceName,
+              userName: requester,
+              userId: params.requesterUserId,
+              channelId: params.channelId,
+            }),
+          },
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: t('feishu.workspaceBindApprove'),
+              },
+              type: 'primary',
+              value: {
+                action: 'workspace-bind-approve',
+                request_id: params.requestId,
+              },
+            },
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: t('feishu.workspaceBindReject'),
+              },
+              type: 'danger',
+              value: {
+                action: 'workspace-bind-reject',
+                request_id: params.requestId,
+              },
+            },
+          ],
+        },
+      ],
+    }
+  }
+
   const buildQuestionCardContent = (params: {
     title: string
     questionId: string
@@ -1575,6 +1641,40 @@ export function createFeishuClient(
         return null
       }
     },
+    async sendWorkspaceBindApprovalCard(
+      adminChatId: string,
+      params: {
+        requestId: string
+        channelId: string
+        workspaceName: string
+        requesterUserId: string
+        requesterUserName?: string
+      },
+    ): Promise<string | null> {
+      try {
+        const cardContent = buildWorkspaceBindApprovalCardContent(params)
+
+        const result: unknown = await client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: adminChatId,
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        })
+
+        const messageId = extractMessageId(result)
+        if (!messageId) {
+          log(`Workspace bind approval card sent to ${adminChatId} but missing message_id`, 'warn')
+        } else {
+          log(`Workspace bind approval card sent to ${adminChatId} for request ${params.requestId}`, 'info')
+        }
+        return messageId
+      } catch (error) {
+        log(`Send workspace bind approval card failed: ${error}`, 'error')
+        return null
+      }
+    },
 
     async replyQuestionCardWithId(
       messageId: string,
@@ -2108,6 +2208,54 @@ export function createFeishuClient(
         return true
       } catch (error) {
         log(`Update workspace join card failed: ${error}`, 'error')
+        return false
+      }
+    },
+    async updateWorkspaceBindApprovalCard(
+      messageId: string,
+      status: 'approved' | 'rejected',
+      actionBy: string,
+    ): Promise<boolean> {
+      try {
+        const statusText = status === 'approved'
+          ? t('status.approved')
+          : t('status.rejected')
+        const color = status === 'approved' ? 'green' : 'red'
+
+        const cardContent = {
+          config: {
+            wide_screen_mode: true,
+            update_multi: true,
+          },
+          header: {
+            template: color,
+            title: {
+              content: t('feishu.workspaceBindApprovalTitle'),
+              tag: 'plain_text',
+            },
+          },
+          elements: [
+            {
+              tag: 'div',
+              text: {
+                tag: 'lark_md',
+                content: t('feishu.workspaceBindApprovalStatus', { status: statusText, actionBy }),
+              },
+            },
+          ],
+        }
+
+        await client.im.message.patch({
+          path: { message_id: messageId },
+          data: {
+            content: JSON.stringify(cardContent),
+          },
+        })
+
+        log(`Workspace bind approval card ${messageId} updated to ${statusText}`, 'debug')
+        return true
+      } catch (error) {
+        log(`Update workspace bind approval card failed: ${error}`, 'error')
         return false
       }
     },

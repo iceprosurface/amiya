@@ -7,7 +7,6 @@ import {
 } from './feishu-event-server'
 import {
   assistantCardStates,
-  buildAssistantCardText,
   splitAssistantDetails,
   splitFooterLines,
 } from './assistant-card-state'
@@ -118,7 +117,11 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
       questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
       permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
-      workspaceAction?: { action: 'bind' | 'join-approve' | 'join-reject'; workspaceName?: string; requestId?: string }
+      workspaceAction?: {
+        action: 'bind' | 'bind-approve' | 'bind-reject' | 'join-approve' | 'join-reject'
+        workspaceName?: string
+        requestId?: string
+      }
     },
   ) => void | Promise<void>) | null = null
 
@@ -264,6 +267,23 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       return
     }
 
+    if (cardAction.action === 'workspace-bind-approve' || cardAction.action === 'workspace-bind-reject') {
+      if (!cardAction.requestId) {
+        log(`Workspace bind approval missing requestId: ${JSON.stringify(cardAction)}`, 'warn')
+        return
+      }
+      void Promise.resolve(messageHandler(incomingMessage, {
+        isCardAction: true,
+        workspaceAction: {
+          action: cardAction.action === 'workspace-bind-approve' ? 'bind-approve' : 'bind-reject',
+          requestId: cardAction.requestId,
+        },
+      })).catch((error) => {
+        log(`Card action handler failed: ${error}`, 'error')
+      })
+      return
+    }
+
     if (cardAction.action === 'workspace-join-approve' || cardAction.action === 'workspace-join-reject') {
       if (!cardAction.requestId) {
         log(`Workspace join action missing requestId: ${JSON.stringify(cardAction)}`, 'warn')
@@ -281,6 +301,10 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       return
     }
 
+    if (cardAction.action !== 'approve' && cardAction.action !== 'reject') {
+      log(`Unhandled card action: ${JSON.stringify(cardAction)}`, 'warn')
+      return
+    }
     void Promise.resolve(messageHandler(incomingMessage, {
       isCardAction: true,
       cardActionData: {
@@ -310,7 +334,11 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
       questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
       permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
-      workspaceAction?: { action: 'bind' | 'join-approve' | 'join-reject'; workspaceName?: string; requestId?: string }
+      workspaceAction?: {
+        action: 'bind' | 'bind-approve' | 'bind-reject' | 'join-approve' | 'join-reject'
+        workspaceName?: string
+        requestId?: string
+      }
     },
   ) => void | Promise<void>): void {
     messageHandler = handler

@@ -55,7 +55,7 @@ export interface MessageProvider {
         questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
         permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
         workspaceAction?: {
-          action: 'bind' | 'join-approve' | 'join-reject'
+          action: 'bind' | 'bind-approve' | 'bind-reject' | 'join-approve' | 'join-reject'
           workspaceName?: string
           requestId?: string
         }
@@ -111,6 +111,21 @@ export type FeishuCardClient = {
     params: { userId: string },
     options?: { replyInThread?: boolean },
   ) => Promise<string | null>
+  sendWorkspaceBindApprovalCard?: (
+    adminChatId: string,
+    params: {
+      requestId: string
+      channelId: string
+      workspaceName: string
+      requesterUserId: string
+      requesterUserName?: string
+    },
+  ) => Promise<string | null>
+  updateWorkspaceBindApprovalCard?: (
+    messageId: string,
+    status: 'approved' | 'rejected',
+    actionBy: string,
+  ) => Promise<boolean>
   replyWorkspaceJoinApprovalCardWithId?: (
     messageId: string,
     params: {

@@ -104,6 +104,14 @@ export function getDatabase(): Database.Database {
     `)
 
     db.exec(`
+      CREATE TABLE IF NOT EXISTS channel_workspaces (
+        channel_id TEXT PRIMARY KEY,
+        workspace_name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
       CREATE TABLE IF NOT EXISTS user_workspaces (
         user_id TEXT PRIMARY KEY,
         workspace_name TEXT NOT NULL,
@@ -119,6 +127,21 @@ export function getDatabase(): Database.Database {
         requester_user_name TEXT,
         requester_channel_id TEXT NOT NULL,
         owner_user_id TEXT NOT NULL,
+        card_message_id TEXT,
+        status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_bind_requests (
+        request_id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL,
+        workspace_name TEXT NOT NULL,
+        requester_user_id TEXT NOT NULL,
+        requester_user_name TEXT,
+        admin_chat_id TEXT NOT NULL,
         card_message_id TEXT,
         status TEXT DEFAULT 'pending',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -434,6 +457,20 @@ export function addWorkspaceMember(workspaceName: string, userId: string): void 
   getDatabase()
     .prepare('INSERT OR REPLACE INTO workspace_members (workspace_name, user_id) VALUES (?, ?)')
     .run(workspaceName, userId)
+}
+
+export function getChannelWorkspace(channelId: string): string | undefined {
+  const row = getDatabase()
+    .prepare('SELECT workspace_name FROM channel_workspaces WHERE channel_id = ?')
+    .get(channelId) as { workspace_name: string } | undefined
+  return row?.workspace_name
+}
+
+export function createChannelWorkspace(channelId: string, workspaceName: string): boolean {
+  const result = getDatabase()
+    .prepare('INSERT OR IGNORE INTO channel_workspaces (channel_id, workspace_name) VALUES (?, ?)')
+    .run(channelId, workspaceName) as { changes: number }
+  return result.changes > 0
 }
 
 export function getUserWorkspace(userId: string): string | undefined {
@@ -910,6 +947,123 @@ export function updateWorkspaceJoinRequestStatus(requestId: string, status: stri
   getDatabase()
     .prepare(
       'UPDATE workspace_join_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE request_id = ?',
+    )
+    .run(status, requestId)
+}
+
+export function createWorkspaceBindRequest(params: {
+  requestId: string
+  channelId: string
+  workspaceName: string
+  requesterUserId: string
+  requesterUserName?: string
+  adminChatId: string
+  cardMessageId?: string
+}): void {
+  getDatabase()
+    .prepare(
+      `INSERT INTO workspace_bind_requests (
+        request_id,
+        channel_id,
+        workspace_name,
+        requester_user_id,
+        requester_user_name,
+        admin_chat_id,
+        card_message_id,
+        status,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)`,
+    )
+    .run(
+      params.requestId,
+      params.channelId,
+      params.workspaceName,
+      params.requesterUserId,
+      params.requesterUserName || '',
+      params.adminChatId,
+      params.cardMessageId || null,
+    )
+}
+
+export function getWorkspaceBindRequest(requestId: string): {
+  requestId: string
+  channelId: string
+  workspaceName: string
+  requesterUserId: string
+  requesterUserName: string
+  adminChatId: string
+  cardMessageId?: string
+  status: string
+} | undefined {
+  const row = getDatabase()
+    .prepare('SELECT * FROM workspace_bind_requests WHERE request_id = ?')
+    .get(requestId) as {
+    request_id: string
+    channel_id: string
+    workspace_name: string
+    requester_user_id: string
+    requester_user_name: string
+    admin_chat_id: string
+    card_message_id?: string | null
+    status: string
+  } | undefined
+  if (!row) return undefined
+  return {
+    requestId: row.request_id,
+    channelId: row.channel_id,
+    workspaceName: row.workspace_name,
+    requesterUserId: row.requester_user_id,
+    requesterUserName: row.requester_user_name || '',
+    adminChatId: row.admin_chat_id,
+    cardMessageId: row.card_message_id || undefined,
+    status: row.status,
+  }
+}
+
+export function getPendingWorkspaceBindRequest(channelId: string): {
+  requestId: string
+  channelId: string
+  workspaceName: string
+  requesterUserId: string
+  requesterUserName: string
+  adminChatId: string
+  cardMessageId?: string
+  status: string
+} | undefined {
+  const row = getDatabase()
+    .prepare(
+      `SELECT * FROM workspace_bind_requests
+       WHERE channel_id = ? AND status = 'pending'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+    )
+    .get(channelId) as {
+    request_id: string
+    channel_id: string
+    workspace_name: string
+    requester_user_id: string
+    requester_user_name: string
+    admin_chat_id: string
+    card_message_id?: string | null
+    status: string
+  } | undefined
+  if (!row) return undefined
+  return {
+    requestId: row.request_id,
+    channelId: row.channel_id,
+    workspaceName: row.workspace_name,
+    requesterUserId: row.requester_user_id,
+    requesterUserName: row.requester_user_name || '',
+    adminChatId: row.admin_chat_id,
+    cardMessageId: row.card_message_id || undefined,
+    status: row.status,
+  }
+}
+
+export function updateWorkspaceBindRequestStatus(requestId: string, status: string): void {
+  getDatabase()
+    .prepare(
+      'UPDATE workspace_bind_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE request_id = ?',
     )
     .run(status, requestId)
 }

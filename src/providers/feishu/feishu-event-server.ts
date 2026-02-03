@@ -16,6 +16,8 @@ export type CardActionHandler = (cardAction: {
     | 'permission'
     | 'assistant-toggle'
     | 'workspace-bind'
+    | 'workspace-bind-approve'
+    | 'workspace-bind-reject'
     | 'workspace-join-approve'
     | 'workspace-join-reject'
   requestId?: string
@@ -118,6 +120,8 @@ export function createFeishuEventClient(
       | 'permission'
       | 'assistant-toggle'
       | 'workspace-bind'
+      | 'workspace-bind-approve'
+      | 'workspace-bind-reject'
       | 'workspace-join-approve'
       | 'workspace-join-reject'
       | undefined

@@ -13,12 +13,11 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
     return true;
   }
   active.controller.abort(new Error("abort"));
-  const directory = resolveAccessibleDirectory(
-    message.channelId,
-    message.userId,
-    options.projectDirectory,
-    options.logger,
-  );
+  const directory = resolveAccessibleDirectory({
+    channelId: message.channelId,
+    projectDirectory: options.projectDirectory,
+    logger: options.logger,
+  });
   const getClient = await initializeOpencodeForDirectory(directory, options.opencodeConfig);
   if (!(getClient instanceof Error)) {
     try {

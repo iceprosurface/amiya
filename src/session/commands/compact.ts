@@ -9,12 +9,11 @@ import type { CommandHandler } from "./shared.js";
 
 export const handleCompact: CommandHandler = async (message, command, options) => {
   const { provider } = options;
-  const directory = resolveAccessibleDirectory(
-    message.channelId,
-    message.userId,
-    options.projectDirectory,
-    options.logger,
-  );
+  const directory = resolveAccessibleDirectory({
+    channelId: message.channelId,
+    projectDirectory: options.projectDirectory,
+    logger: options.logger,
+  });
 
   const getClient = await initializeOpencodeForDirectory(directory, options.opencodeConfig);
   if (getClient instanceof Error) {

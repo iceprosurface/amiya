@@ -26,13 +26,13 @@ export function expandUserPath(input: string): string {
   return home ? path.join(home, input.slice(2)) : input;
 }
 
-export function resolveAccessibleDirectory(
-  channelId: string,
-  userId: string,
-  projectDirectory: string,
-  logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void,
-): string {
-  const workspaceDirectory = resolveWorkspaceDirectory(userId, logger);
+export function resolveAccessibleDirectory(params: {
+  channelId: string;
+  projectDirectory: string;
+  logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void;
+}): string {
+  const { channelId, projectDirectory, logger } = params;
+  const workspaceDirectory = resolveWorkspaceDirectory(channelId, logger);
   if (workspaceDirectory) return workspaceDirectory;
 
   const channelDirectory = getChannelDirectory(channelId);
