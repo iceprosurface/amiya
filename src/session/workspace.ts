@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { getWorkspaceBaseDir } from "../config.js";
+import { getWorkspaceBaseDir, getWorkspaceJoinRequiresApproval } from "../config.js";
 import {
   addWorkspaceMember,
   createWorkspace,
@@ -146,6 +146,15 @@ export async function handleWorkspaceAction(
       ensureWorkspaceDirectory(rawName, options.logger);
       pendingWorkspaceBinds.delete(message.userId);
       await sendReply(options.provider, message, t("workspace.boundSwitched", { name: rawName }));
+      return true;
+    }
+
+    if (!getWorkspaceJoinRequiresApproval()) {
+      addWorkspaceMember(rawName, message.userId);
+      setUserWorkspace(message.userId, rawName);
+      ensureWorkspaceDirectory(rawName, options.logger);
+      pendingWorkspaceBinds.delete(message.userId);
+      await sendReply(options.provider, message, t("workspace.joinAuto", { name: rawName }));
       return true;
     }
 

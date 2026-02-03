@@ -68,6 +68,7 @@ export const zh = {
       nameInvalid: "❌ 工作区名称仅允许英文字母和-。",
       boundCreated: "✅ 已创建并绑定工作区：{{name}}",
       boundSwitched: "✅ 已切换到工作区：{{name}}",
+      joinAuto: "✅ 已加入工作区：{{name}}",
       joinSubmitted: "✅ 已提交加入工作区请求：{{name}}（等待 {{ownerId}} 同意）。",
       joinRequestFailed: "❌ 发送加入请求失败，请联系工作区拥有者。",
       joinRequestMissing: "❌ 加入请求不存在或已过期。",
