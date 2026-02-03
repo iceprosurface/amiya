@@ -8,7 +8,16 @@ export type FeishuMessageEventData = MessageEventData
 export type MessageHandler = (event: MessageEventData) => void | Promise<void>
 
 export type CardActionHandler = (cardAction: {
-  action: 'approve' | 'reject' | 'question' | 'question-nav' | 'permission' | 'assistant-toggle'
+  action:
+    | 'approve'
+    | 'reject'
+    | 'question'
+    | 'question-nav'
+    | 'permission'
+    | 'assistant-toggle'
+    | 'workspace-bind'
+    | 'workspace-join-approve'
+    | 'workspace-join-reject'
   requestId?: string
   questionId?: string
   answerLabel?: string
@@ -17,6 +26,7 @@ export type CardActionHandler = (cardAction: {
   reply?: 'once' | 'always' | 'reject'
   section?: 'details' | 'meta'
   expanded?: boolean
+  workspaceName?: string
   userId: string
   messageId: string
   channelId: string
@@ -100,7 +110,17 @@ export function createFeishuEventClient(
       return readString(cur)
     }
 
-    const cardAction = actionValue?.action as 'approve' | 'reject' | 'question' | 'question-nav' | 'permission' | 'assistant-toggle' | undefined
+    const cardAction = actionValue?.action as
+      | 'approve'
+      | 'reject'
+      | 'question'
+      | 'question-nav'
+      | 'permission'
+      | 'assistant-toggle'
+      | 'workspace-bind'
+      | 'workspace-join-approve'
+      | 'workspace-join-reject'
+      | undefined
     const requestId = actionValue?.request_id as string | undefined
     const questionId = actionValue?.question_id as string | undefined
     const answerLabel = actionValue?.answer_label as string | undefined
@@ -109,6 +129,10 @@ export function createFeishuEventClient(
     const questionIndex = actionValue?.question_index as number | string | undefined
     const section = actionValue?.section as 'details' | 'meta' | undefined
     const expanded = typeof actionValue?.expanded === 'boolean' ? actionValue.expanded : undefined
+    const formValue = (action as Record<string, unknown>)?.form as Record<string, unknown> | undefined
+    const workspaceName =
+      readString(formValue?.workspace_name)
+      ?? readString(actionValue?.workspace_name)
 
     if (!cardAction) {
       log(`Invalid card action value: ${JSON.stringify(actionValue)}`, 'warn')
@@ -154,6 +178,7 @@ export function createFeishuEventClient(
         reply,
         section,
         expanded,
+        workspaceName,
         userId: resolvedUserId,
         messageId: messageId || '',
         threadId: messageId || '',
