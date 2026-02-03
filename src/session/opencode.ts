@@ -1031,6 +1031,26 @@ export async function sendPrompt({
           };
           pendingPermissions.set(normalized.requestId, pending);
         },
+        onAssistantMessageSwitch: streamingEnabled
+          ? async () => {
+              if (!streamSink) return;
+              streamSink.detach();
+              streamSink = createFeishuStreamSink({
+                provider,
+                message,
+                throttleMs: streamingConfig.throttleMs ?? 700,
+                maxMessageChars: streamingConfig.maxMessageChars ?? 20000,
+                mode: streamingConfig.mode ?? "update",
+                logger,
+              });
+              const placeholder = await streamSink.start();
+              activeStreams.set(message.threadId, {
+                placeholderId: placeholder.messageId,
+                cardId: placeholder.cardId,
+                elementId: placeholder.elementId,
+              });
+            }
+          : undefined,
         logger,
       });
 

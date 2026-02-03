@@ -21,6 +21,7 @@ export interface StreamingControllerOptions {
     permission?: string
     patterns?: string[]
   }) => Promise<void>
+  onAssistantMessageSwitch?: () => Promise<void>
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void
 }
 
@@ -278,6 +279,25 @@ export async function createStreamingController(
           } else {
             return
           }
+        } else if (assistantMessageId && info.id && info.id !== assistantMessageId && shouldAcceptAssistant(createdAt)) {
+          logWith(
+            options.logger,
+            `Stream assistant message switched from ${assistantMessageId} to ${info.id}`,
+            "debug",
+          )
+          assistantMessageId = info.id
+          textCache = ""
+          renderedPayload = ""
+          messageParts.clear()
+          if (options.onAssistantMessageSwitch) {
+            try {
+              await options.onAssistantMessageSwitch()
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              logWith(options.logger, `Stream message switch callback failed: ${message}`, "debug")
+            }
+          }
+          await updateTextCache()
         }
         if (assistantMessageId && info.id === assistantMessageId && info.time?.completed) {
           await handleTextUpdate(renderedPayload || textCache, true)

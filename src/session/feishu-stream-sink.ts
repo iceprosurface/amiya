@@ -229,7 +229,10 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
       currentMessageId = null
       currentCardId = null
       currentElementId = null
+      currentSequence = 1
       lastRenderedText = ""
+      lastPanelStates = null
+      lastMessageParts = null
       logWith(logger, "Stream sink detached; future replies will start a new card", "debug")
     },
     getMessageIds() {
