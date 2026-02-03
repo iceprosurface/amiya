@@ -6,7 +6,7 @@ import type { CommandHandler } from "./shared.js";
 
 export const handleMentionRequired: CommandHandler = async (message, command, options) => {
   const { provider } = options;
-  const current = getThreadMentionRequired(message.threadId) ?? true;
+  const current = getThreadMentionRequired(message.threadId) ?? false;
   const value = parseBooleanArg(command.args[0]);
   if (value === null) {
     await sendReply(

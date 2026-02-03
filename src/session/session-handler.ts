@@ -138,7 +138,7 @@ export async function handleIncomingMessage(
   const isQuestionResponse = Boolean(options.questionResponse || options.questionNav);
   const isInteractiveResponse = isQuestionResponse || Boolean(options.permissionResponse);
   const mentionRequired = options.botUserId
-    ? (getThreadMentionRequired(message.threadId) ?? true)
+    ? (getThreadMentionRequired(message.threadId) ?? false)
     : false;
   const isThreadReply =
     Boolean(message.threadId) &&
