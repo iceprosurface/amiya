@@ -4,6 +4,7 @@ import {
   getChannelDirectory,
   getQuestionRequest,
   getThreadMentionRequired,
+  getThreadSessionUser,
   isUserInWhitelist,
 } from "../database.js";
 import { getOpencodeClientV2 } from "../opencode.js";
@@ -268,6 +269,16 @@ export async function handleIncomingMessage(
     logWith(
       options.logger,
       `Question action handled ${questionId}: ${pending.answeredIndices.size}/${total} current=${pending.currentIndex + 1}`,
+      "debug",
+    );
+    return;
+  }
+
+  const boundUserId = getThreadSessionUser(message.threadId);
+  if (boundUserId && boundUserId !== message.userId) {
+    logWith(
+      options.logger,
+      `Message ignored: thread=${message.threadId} boundUser=${boundUserId} user=${message.userId}`,
       "debug",
     );
     return;

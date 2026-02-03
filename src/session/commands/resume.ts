@@ -17,7 +17,7 @@ export const handleResume: CommandHandler = async (message, command, options) =>
     );
     return true;
   }
-  setThreadSession(message.threadId, sessionId);
+  setThreadSession(message.threadId, sessionId, message.userId);
   await sendReply(provider, message, t("commands.resumeSet", { sessionId }));
   return true;
 };

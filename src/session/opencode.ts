@@ -8,6 +8,7 @@ import {
   getSessionAgent,
   getSessionModel,
   getThreadSession,
+  getThreadSessionUser,
   setChannelDirectory,
   setThreadSession,
   updateQuestionRequestCard,
@@ -774,6 +775,7 @@ export async function resolveModel(
 export async function resolveSessionId(
   getClient: () => OpencodeClient,
   threadId: string,
+  userId: string,
   directory: string,
   prompt: string,
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void,
@@ -786,6 +788,9 @@ export async function resolveSessionId(
         query: { directory },
       });
       if (sessionResponse.data?.id) {
+        if (!getThreadSessionUser(threadId)) {
+          setThreadSession(threadId, existingSessionId, userId);
+        }
         logWith(logger, `Reusing session ${existingSessionId}`, "info");
         return existingSessionId;
       }
@@ -817,7 +822,7 @@ export async function resolveSessionId(
     throw new Error(t("opencode.createSessionFailed"));
   }
 
-  setThreadSession(threadId, sessionResponse.data.id);
+  setThreadSession(threadId, sessionResponse.data.id, userId);
   return sessionResponse.data.id;
 }
 
@@ -868,6 +873,7 @@ export async function sendPrompt({
   const sessionId = await resolveSessionId(
     getClient,
     message.threadId,
+    message.userId,
     directory,
     message.text,
     logger,
