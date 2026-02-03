@@ -135,6 +135,25 @@ export async function handleIncomingMessage(
     }
   }
 
+  const isQuestionResponse = Boolean(options.questionResponse || options.questionNav);
+  const isInteractiveResponse = isQuestionResponse || Boolean(options.permissionResponse);
+  const mentionRequired = options.botUserId
+    ? (getThreadMentionRequired(message.threadId) ?? true)
+    : false;
+  const isThreadReply =
+    Boolean(message.threadId) &&
+    Boolean(message.messageId) &&
+    message.threadId !== message.messageId;
+  if (!isInteractiveResponse) {
+    if (!isThreadReply) {
+      if (!isBotMentioned(message, options.botUserId)) {
+        return;
+      }
+    } else if (mentionRequired && !isBotMentioned(message, options.botUserId)) {
+      return;
+    }
+  }
+
   if (await ensureWorkspaceBound(message, options)) {
     return;
   }
@@ -207,7 +226,6 @@ export async function handleIncomingMessage(
     return;
   }
 
-  const isQuestionResponse = Boolean(options.questionResponse || options.questionNav);
   if (options.questionResponse || options.questionNav) {
     const questionId = options.questionResponse?.questionId || options.questionNav?.questionId;
     let pending = questionId ? pendingQuestions.get(questionId) : undefined;
@@ -331,17 +349,6 @@ export async function handleIncomingMessage(
     if (handled) {
       return;
     }
-  }
-
-  const mentionRequired = options.botUserId
-    ? (getThreadMentionRequired(message.threadId) ?? true)
-    : false;
-  const isThreadReply =
-    Boolean(message.threadId) &&
-    Boolean(message.messageId) &&
-    message.threadId !== message.messageId;
-  if (!isQuestionResponse && mentionRequired && !isThreadReply && !isBotMentioned(message, options.botUserId)) {
-    return;
   }
 
   if (commandAfterBinding) {
