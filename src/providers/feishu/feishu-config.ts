@@ -19,6 +19,7 @@ export interface StreamingConfig {
   mode?: 'update' | 'append'
   throttleMs?: number
   maxMessageChars?: number
+  timeoutGraceMs?: number
 }
 
 export function validateConfig(config: unknown): config is FeishuConfig {
@@ -40,6 +41,7 @@ export function validateConfig(config: unknown): config is FeishuConfig {
     if (typeof s.mode !== 'undefined' && s.mode !== 'update' && s.mode !== 'append') return false
     if (typeof s.throttleMs !== 'undefined' && typeof s.throttleMs !== 'number') return false
     if (typeof s.maxMessageChars !== 'undefined' && typeof s.maxMessageChars !== 'number') return false
+    if (typeof s.timeoutGraceMs !== 'undefined' && typeof s.timeoutGraceMs !== 'number') return false
   }
   return true
 }
