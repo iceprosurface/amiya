@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getChannelDirectory, setChannelDirectory } from "../../database.js";
+import { resolveWorkspaceDirectory } from "../workspace.js";
 import type { IncomingMessage } from "../../types.js";
 import type { SessionHandlerOptions } from "../session-handler.js";
 
@@ -27,9 +28,13 @@ export function expandUserPath(input: string): string {
 
 export function resolveAccessibleDirectory(
   channelId: string,
+  userId: string,
   projectDirectory: string,
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void,
 ): string {
+  const workspaceDirectory = resolveWorkspaceDirectory(userId, logger);
+  if (workspaceDirectory) return workspaceDirectory;
+
   const channelDirectory = getChannelDirectory(channelId);
   if (!channelDirectory) return projectDirectory;
 

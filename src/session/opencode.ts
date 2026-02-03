@@ -23,6 +23,7 @@ import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
 import { getOpencodeSystemMessage } from "../system-message.js";
 import type { IncomingMessage, MessageProvider } from "../types.js";
 import { createFeishuStreamSink } from "./feishu-stream-sink.js";
+import { resolveWorkspaceDirectory } from "./workspace.js";
 import {
   extractPartsFromPromptResult,
   extractTextFromPromptResult,
@@ -843,12 +844,15 @@ export async function sendPrompt({
   streaming?: StreamingConfig;
   toolOutputFileThreshold?: number;
 }): Promise<void> {
-  const directory = resolveAccessibleDirectory(
+  const workspaceDirectory = resolveWorkspaceDirectory(message.userId, logger);
+  const directory = workspaceDirectory || resolveAccessibleDirectory(
     message.channelId,
     projectDirectory,
     logger,
   );
-  setChannelDirectory(message.channelId, directory);
+  if (!workspaceDirectory) {
+    setChannelDirectory(message.channelId, directory);
+  }
 
   const getClient = await initializeOpencodeForDirectory(
     directory,

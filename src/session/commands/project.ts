@@ -11,6 +11,7 @@ export const handleProject: CommandHandler = async (message, command, options) =
   if (!rawArg) {
     const directory = resolveAccessibleDirectory(
       message.channelId,
+      message.userId,
       options.projectDirectory,
       options.logger,
     );

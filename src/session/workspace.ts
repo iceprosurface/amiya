@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
+
+import { getWorkspaceBaseDir } from "../config.js";
 import {
   addWorkspaceMember,
   createWorkspace,
@@ -21,6 +25,27 @@ const WORKSPACE_BIND_COOLDOWN_MS = 60_000;
 
 function isValidWorkspaceName(name: string): boolean {
   return WORKSPACE_NAME_REGEX.test(name);
+}
+
+function ensureWorkspaceDirectory(workspaceName: string, logger?: SessionHandlerOptions["logger"]): string | undefined {
+  const baseDir = getWorkspaceBaseDir();
+  const workspaceDir = path.join(baseDir, workspaceName);
+  try {
+    if (!fs.existsSync(workspaceDir)) {
+      fs.mkdirSync(workspaceDir, { recursive: true });
+    }
+    fs.accessSync(workspaceDir, fs.constants.R_OK | fs.constants.X_OK);
+    return workspaceDir;
+  } catch (error) {
+    logWith(logger, `Workspace directory not accessible: ${workspaceDir} (${error})`, "warn");
+    return undefined;
+  }
+}
+
+export function resolveWorkspaceDirectory(userId: string, logger?: SessionHandlerOptions["logger"]): string | undefined {
+  const workspaceName = getUserWorkspace(userId);
+  if (!workspaceName) return undefined;
+  return ensureWorkspaceDirectory(workspaceName, logger);
 }
 
 async function sendWorkspaceBindCard(
@@ -101,6 +126,7 @@ export async function handleWorkspaceAction(
       createWorkspace(rawName, message.userId);
       addWorkspaceMember(rawName, message.userId);
       setUserWorkspace(message.userId, rawName);
+      ensureWorkspaceDirectory(rawName, options.logger);
       pendingWorkspaceBinds.delete(message.userId);
       await sendReply(options.provider, message, t("workspace.boundCreated", { name: rawName }));
       return true;
@@ -109,6 +135,7 @@ export async function handleWorkspaceAction(
     if (existing.ownerUserId === message.userId) {
       addWorkspaceMember(rawName, message.userId);
       setUserWorkspace(message.userId, rawName);
+      ensureWorkspaceDirectory(rawName, options.logger);
       pendingWorkspaceBinds.delete(message.userId);
       await sendReply(options.provider, message, t("workspace.boundSwitched", { name: rawName }));
       return true;
@@ -116,6 +143,7 @@ export async function handleWorkspaceAction(
 
     if (isWorkspaceMember(rawName, message.userId)) {
       setUserWorkspace(message.userId, rawName);
+      ensureWorkspaceDirectory(rawName, options.logger);
       pendingWorkspaceBinds.delete(message.userId);
       await sendReply(options.provider, message, t("workspace.boundSwitched", { name: rawName }));
       return true;
@@ -186,6 +214,7 @@ export async function handleWorkspaceAction(
   if (approved) {
     addWorkspaceMember(request.workspaceName, request.requesterUserId);
     setUserWorkspace(request.requesterUserId, request.workspaceName);
+    ensureWorkspaceDirectory(request.workspaceName, options.logger);
   }
 
   const client = options.provider.getFeishuClient?.();

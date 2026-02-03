@@ -12,6 +12,7 @@ export const handleContext: CommandHandler = async (message, command, options) =
   const { provider } = options;
   const directory = resolveAccessibleDirectory(
     message.channelId,
+    message.userId,
     options.projectDirectory,
     options.logger,
   );
