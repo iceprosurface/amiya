@@ -356,7 +356,7 @@ export function parseAssistantToolRuns(details?: string): AssistantToolRun[] {
   const lines = trimmed.split('\n')
   let i = 0
   while (i < lines.length && lines[i]?.trim().length === 0) i += 1
-  if (i < lines.length && lines[i]?.trim() === ASSISTANT_TOOL_OUTPUT_MARKER) {
+  if (i < lines.length && lines[i]?.trim() === getAssistantToolOutputMarker()) {
     i += 1
   }
   while (i < lines.length && lines[i]?.trim().length === 0) i += 1

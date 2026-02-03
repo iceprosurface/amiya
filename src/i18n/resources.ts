@@ -12,6 +12,7 @@ export const resources = {
         meta: "Metadata",
         thinking: "Thinking",
         thinkingDone: "Thinking (completed)",
+        agentInfo: " (agent: {{agent}})",
       },
       status: {
         approved: "Approved",
@@ -23,6 +24,10 @@ export const resources = {
         submit: "Submit",
         choose: "Please choose",
         none: "None",
+        yes: "Yes",
+        no: "No",
+        incomplete: "Incomplete",
+        unknownError: "Unknown error",
       },
       help: {
         title: "**Command Help**",
@@ -68,6 +73,7 @@ export const resources = {
         newRequestStarted: "New request started",
         providerMissing: "✗ AI provider not connected. Use /connect in OpenCode to configure a provider.",
         requestTimeout: "OpenCode request timed out. It may be waiting for approval; confirm and approve it in OpenCode.",
+        portFailed: "Failed to acquire port",
       },
       utils: {
         connRefused: "Connection refused: local port not listening or process not started",
@@ -218,6 +224,10 @@ export const resources = {
         approvalStatus: "Approval {{status}}, by: {{actionBy}}",
         collapsedTool: "_Tool output collapsed; expand below_",
         collapsedMeta: "_Metadata collapsed; expand below_",
+        cardTitleStreaming: "{{title}} (streaming)",
+      },
+      slack: {
+        notImplemented: "Slack provider is not implemented yet",
       },
       system: {
         promptDefault: "# Role: High-efficiency technical assistant (JARVIS style)\n\n## Profile\nYou are calm, professional, and fast, similar to \"JARVIS\":\n- Prefer facts and executable plans\n- Keep goals clear and concise\n- Be polite without being overly emotional\n\n## Operating Principles\n1. **Clarify goal**: confirm target, scope, and constraints.\n2. **Efficient execution**: provide the shortest viable path, with alternatives if needed.\n3. **Verifiable**: provide validation steps for key conclusions.\n4. **Maintainable**: consider readability and maintainability when changing code or config.\n\n## Output Style\n- Use concise Markdown\n- For complex problems, use \"Breakdown → Plan → Execute → Verify\"\n- Avoid long greetings; keep it clear and professional\n\n## Communication Guidelines\n- Address the user as \"you\"\n- Tone is steady, restrained, polite\n- Provide clear options and recommendations when decisions are needed\n\n## Constraints\n- No roleplay or fictional persona\n- Do not exaggerate capabilities; be realistic and cautious\n\n## Opening Dialogue Example\n\"Hello, I am ready. Please tell me the priority for this task.\"",
@@ -239,6 +249,7 @@ export const resources = {
         meta: "元信息",
         thinking: "思考",
         thinkingDone: "思考中（已完成）",
+        agentInfo: "（agent: {{agent}}）",
       },
       status: {
         approved: "已同意",
@@ -250,6 +261,10 @@ export const resources = {
         submit: "提交",
         choose: "请选择",
         none: "无",
+        yes: "是",
+        no: "否",
+        incomplete: "未完成",
+        unknownError: "未知错误",
       },
       help: {
         title: "**命令帮助**",
@@ -295,6 +310,7 @@ export const resources = {
         newRequestStarted: "新请求已启动",
         providerMissing: "✗ 未连接 AI 提供商。请在 OpenCode 中使用 /connect 配置提供商。",
         requestTimeout: "OpenCode 请求超时，可能在等待审批；请在 OpenCode 侧确认并放行该请求。",
+        portFailed: "获取端口失败",
       },
       utils: {
         connRefused: "连接被拒绝：本机端口未监听/进程未启动",
@@ -445,6 +461,10 @@ export const resources = {
         approvalStatus: "审批{{status}}，操作人: {{actionBy}}",
         collapsedTool: "_工具输出已收起，可点击下方展开_",
         collapsedMeta: "_元信息已收起，可点击下方展开_",
+        cardTitleStreaming: "{{title}}（生成中）",
+      },
+      slack: {
+        notImplemented: "Slack 提供商尚未实现",
       },
       system: {
         promptDefault: "# Role: 高效技术助理（JARVIS 风格）\n\n## Profile\n你是一个冷静、专业、反应迅速的技术助理，风格接近“贾维斯”：  \n- 以事实与可执行方案为先  \n- 对任务目标保持清晰、简洁的表达  \n- 用礼貌但不过度情感化的语气协作\n\n## Operating Principles\n1. **明确目标**：优先确认任务目标、范围、约束。  \n2. **高效执行**：给出最短可行路径，必要时提供备选方案。  \n3. **可验证**：对关键结论给出验证方法或可复现步骤。  \n4. **可维护**：在代码或配置修改时，兼顾可读性与后续维护成本。  \n\n## Output Style\n- 使用简洁的 Markdown 排版  \n- 复杂问题按“拆解 → 方案 → 执行 → 验证”组织  \n- 避免冗长寒暄，保持清晰与专业  \n\n## Communication Guidelines\n- 称呼用户为“您”  \n- 语气稳重、克制、礼貌  \n- 当需要决策时给出明确选项与建议\n\n## Constraints\n- 不进行角色扮演式的自称或世界观设定  \n- 不夸大能力，保持真实、谨慎  \n\n## Opening Dialogue Example\n“您好，我已就绪。请告诉我这次需要优先处理的目标。”",

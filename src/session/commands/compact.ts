@@ -1,5 +1,6 @@
 import { getThreadSession } from "../../database.js";
 import { getOpencodeClientV2, initializeOpencodeForDirectory } from "../../opencode.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import { resolveModel } from "../opencode.js";
 import { logWith, toUserErrorMessage } from "../utils.js";
@@ -23,13 +24,13 @@ export const handleCompact: CommandHandler = async (message, command, options) =
   const sessionIdArg = command.args[0];
   const sessionId = sessionIdArg || getThreadSession(message.threadId);
   if (!sessionId) {
-    await sendReply(provider, message, "未绑定会话。使用 /resume <会话ID> 或 /compact <会话ID>。");
+    await sendReply(provider, message, t("commands.compactNoSession"));
     return true;
   }
 
   const clientV2 = getOpencodeClientV2(directory);
   if (!clientV2) {
-    await sendReply(provider, message, "✗ OpenCode v2 客户端不可用，无法压缩会话。");
+    await sendReply(provider, message, t("commands.compactClientMissing"));
     return true;
   }
 
@@ -70,7 +71,11 @@ export const handleCompact: CommandHandler = async (message, command, options) =
       `Compaction failed session=${sessionId} status=${status} error=${errorMessage}`,
       "warn",
     );
-    await sendReply(provider, message, `✗ 压缩失败（${status}）：${errorMessage}`);
+    await sendReply(
+      provider,
+      message,
+      t("commands.compactFailed", { status, error: errorMessage }),
+    );
     return true;
   }
 
@@ -79,6 +84,6 @@ export const handleCompact: CommandHandler = async (message, command, options) =
     `Compaction completed session=${sessionId} provider=${providerID || "-"} model=${modelID || "-"}`,
     "debug",
   );
-  await sendReply(provider, message, "✅ 会话已压缩。");
+  await sendReply(provider, message, t("commands.compactDone"));
   return true;
 };

@@ -1,5 +1,5 @@
 import {
-  ASSISTANT_THINKING_MARKER,
+  getAssistantThinkingMarker,
   assistantCardStates,
   buildAssistantCardText,
   detectPanelStates,
@@ -135,7 +135,8 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
       if (lastPanelStates) {
         if (!finalPanelStates.hasThinkingPanel && lastPanelStates.hasThinkingPanel) {
           const thinkingContent = lastPanelStates.thinkingContent ?? ''
-          const thinkingBlock = thinkingContent ? `${ASSISTANT_THINKING_MARKER}\n${thinkingContent}` : ASSISTANT_THINKING_MARKER
+          const marker = getAssistantThinkingMarker()
+          const thinkingBlock = thinkingContent ? `${marker}\n${thinkingContent}` : marker
           main = `${thinkingBlock}\n\n${main}`
         }
         if (!finalPanelStates.hasToolPanel && lastPanelStates.hasToolPanel && lastPanelStates.toolContent) {

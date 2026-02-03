@@ -1,3 +1,4 @@
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import { activeRequests, messageQueue } from "../state.js";
 import { formatRelativeMs, previewText } from "./shared.js";
@@ -10,9 +11,11 @@ export const handleQueue: CommandHandler = async (message, _command, options) =>
   const active = activeRequests.get(message.threadId);
 
   const lines: string[] = [];
-  lines.push("队列详情");
-  lines.push(`- 活动请求: ${active ? `running (session=${active.sessionId})` : "none"}`);
-  lines.push(`- 等待消息: ${queue.length}`);
+  lines.push(t("commands.queueTitle"));
+  lines.push(t("commands.queueActive", {
+    value: active ? `running (session=${active.sessionId})` : t("common.none"),
+  }));
+  lines.push(t("commands.queueWaiting", { value: queue.length }));
 
   if (queue.length > 0) {
     const items = queue.slice(0, 10);
@@ -25,7 +28,7 @@ export const handleQueue: CommandHandler = async (message, _command, options) =>
       );
     }
     if (queue.length > 10) {
-      lines.push(`- ... 还有 ${queue.length - 10} 条未显示`);
+      lines.push(t("commands.queueMore", { value: queue.length - 10 }));
     }
   }
 

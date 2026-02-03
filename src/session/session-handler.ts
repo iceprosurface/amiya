@@ -9,6 +9,7 @@ import {
 import { getOpencodeClientV2 } from "../opencode.js";
 import type { StreamingConfig } from "../providers/feishu/feishu-config.js";
 import type { IncomingMessage, MessageProvider } from "../types.js";
+import { t } from "../i18n/index.js";
 import { handleCardAction, handleUserNotWhitelisted } from "./approval.js";
 import { handleCommand, parseCommand } from "./commands/index.js";
 import { isBotMentioned } from "./commands/shared.js";
@@ -108,10 +109,10 @@ export async function handleIncomingMessage(
     const selected = pending.answers[pending.currentIndex] || [];
     const canSubmit = pending.answeredIndices.size >= total;
     const nextLabel = pending.currentIndex + 1 >= total
-      ? (canSubmit ? "提交" : "未完成")
-      : "下一步";
+      ? (canSubmit ? t("common.submit") : t("common.incomplete"))
+      : t("common.next");
     await feishuClient.updateQuestionCardWithId(messageId, {
-      title: current.header || "请选择",
+      title: current.header || t("common.choose"),
       questionId: pending.requestId,
       questionText: current.question,
       options: current.options,
@@ -349,7 +350,7 @@ export async function handleIncomingMessage(
       threadId: message.threadId,
       error,
     });
-    const errorMessage = toUserErrorMessage(error) || "未知错误";
+    const errorMessage = toUserErrorMessage(error) || t("common.unknownError");
     await sendReply(options.provider, message, `✗ ${errorMessage}\n\n${report}`);
   } finally {
     await flushQueue(message.threadId, (nextMessage) =>
