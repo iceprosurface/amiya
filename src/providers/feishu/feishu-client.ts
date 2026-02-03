@@ -275,6 +275,29 @@ export function createFeishuClient(
       return match ? match[1] : null
     }
 
+    const extractModelId = (text: string): string | null => {
+      const modelLabel = t('stats.model', { value: '' }).trim()
+      if (!modelLabel) return null
+      const escaped = modelLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = text.match(new RegExp(`${escaped}\\s*([^\n]+)`))
+      return match ? match[1]?.trim() : null
+    }
+
+    const buildMetaTitle = (text: string): string => {
+      const contextPercent = extractContextPercent(text)
+      const modelId = extractModelId(text)
+      if (contextPercent && modelId) {
+        return t('feishu.metaTitleWithContextModel', { value: contextPercent, model: modelId })
+      }
+      if (contextPercent) {
+        return t('feishu.metaTitleWithContext', { value: contextPercent })
+      }
+      if (modelId) {
+        return t('feishu.metaTitleWithModel', { model: modelId })
+      }
+      return t('feishu.metaTitle')
+    }
+
     const buildMetaList = (text: string): string => {
       const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
       if (lines.length === 0) return ''
@@ -708,11 +731,8 @@ export function createFeishuClient(
 
       const metaText = params.meta ?? footer
       if (metaText && metaText.trim().length > 0) {
-        const contextPercent = extractContextPercent(metaText)
         const footerContent = metaText.trim()
-        const metaTitle = contextPercent
-          ? t('feishu.metaTitleWithContext', { value: contextPercent })
-          : t('feishu.metaTitle')
+        const metaTitle = buildMetaTitle(footerContent)
         const metaList = buildMetaList(footerContent)
         elements.push(buildPanel({
           title: metaTitle,
@@ -738,7 +758,6 @@ export function createFeishuClient(
         }
       })()
 
-      const contextPercent = derived.meta ? extractContextPercent(derived.meta) : null
       const mainText = derived.text.trim()
 
       if (derived.thinkingContent !== undefined) {
@@ -835,9 +854,7 @@ export function createFeishuClient(
 
       if (derived.meta && derived.meta.trim().length > 0) {
         const footerContent = derived.meta.trim()
-        const metaTitle = contextPercent
-          ? t('feishu.metaTitleWithContext', { value: contextPercent })
-          : t('feishu.metaTitle')
+        const metaTitle = buildMetaTitle(footerContent)
         const metaList = buildMetaList(footerContent)
         const metaElements = [{
           tag: 'div',

@@ -237,6 +237,8 @@ export const zh = {
       stepBodyInProgress: "进行中",
       metaTitle: "元信息",
       metaTitleWithContext: "上下文 {{value}}",
+      metaTitleWithModel: "{{model}}",
+      metaTitleWithContextModel: "{{value}} · {{model}}",
       userApprovalTitle: "用户访问审批",
       userLabel: "**用户**: {{name}}\n**用户ID**: {{userId}}\n**频道**: {{channelId}}",
       approve: "同意",

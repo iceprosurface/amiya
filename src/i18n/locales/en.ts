@@ -237,6 +237,8 @@ export const en = {
       stepBodyInProgress: "In progress",
       metaTitle: "Metadata",
       metaTitleWithContext: "Context {{value}}",
+      metaTitleWithModel: "{{model}}",
+      metaTitleWithContextModel: "{{value}} - {{model}}",
       userApprovalTitle: "User access approval",
       userLabel: "**User**: {{name}}\n**UserID**: {{userId}}\n**Channel**: {{channelId}}",
       approve: "Approve",

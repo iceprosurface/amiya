@@ -1,7 +1,7 @@
 import type { OpencodeClient } from "@opencode-ai/sdk";
 import { t } from "../i18n/index.js";
-import { isRecord } from "./utils.js";
 import { getRuntimeVersion } from "../version.js";
+import { isRecord } from "./utils.js";
 
 export type TokenTotals = {
   input: number;
