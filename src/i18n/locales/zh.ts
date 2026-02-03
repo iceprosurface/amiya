@@ -234,6 +234,7 @@ export const zh = {
       thinkingTitleDone: "思考中（已完成）",
       thinkingTitleStreaming: "思考中",
       stepInProgress: "子任务（进行中）",
+      stepDone: "子任务（已完成）",
       stepBodyInProgress: "进行中",
       metaTitle: "元信息",
       metaTitleWithContext: "上下文 {{value}}",

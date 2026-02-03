@@ -13,6 +13,7 @@ export const activeRequests = new Map<
 >();
 
 export type ActiveStreamState = {
+  sessionId?: string;
   placeholderId?: string;
   cardId?: string;
   elementId?: string;

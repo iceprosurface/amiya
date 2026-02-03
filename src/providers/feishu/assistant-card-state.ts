@@ -23,6 +23,7 @@ export type AssistantMessagePart = MessagePart
 export type AssistantStepBlock = {
   title?: string
   parts: AssistantMessagePart[]
+  completed?: boolean
 }
 
 const getOrderIndex = (part: AssistantMessagePart): number | null => {
@@ -70,23 +71,27 @@ export function buildAssistantStepsFromParts(parts: AssistantMessagePart[]): {
   const steps: AssistantStepBlock[] = []
   let current: AssistantStepBlock | null = null
   let hasStepMarkers = false
+  const shouldPushStep = (step: AssistantStepBlock) =>
+    step.parts.length > 0 || (typeof step.title === 'string' && step.title.trim().length > 0)
 
   for (const part of orderedParts) {
     const type = part.type
     if (type === 'step-start') {
       hasStepMarkers = true
-      if (current && current.parts.length > 0) {
+      if (current && shouldPushStep(current)) {
         steps.push(current)
       }
-      current = { title: readStepTitle(part), parts: [] }
+      current = { title: readStepTitle(part), parts: [], completed: false }
       continue
     }
     if (type === 'step-finish') {
       hasStepMarkers = true
       if (!current) {
-        current = { parts: [] }
+        current = { parts: [], completed: true }
+      } else {
+        current.completed = true
       }
-      if (current.parts.length > 0) {
+      if (current && shouldPushStep(current)) {
         steps.push(current)
       }
       current = null
@@ -99,7 +104,7 @@ export function buildAssistantStepsFromParts(parts: AssistantMessagePart[]): {
     current.parts.push(part)
   }
 
-  if (current && current.parts.length > 0) {
+  if (current && shouldPushStep(current)) {
     steps.push(current)
   }
 

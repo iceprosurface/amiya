@@ -912,133 +912,255 @@ export async function sendPrompt({
     let streamTimeoutGraceMs = 900000;
     let deferStreamStop = false;
     let questionAsked = false;
-    type StreamSinkEntry = {
-      sink: ReturnType<typeof createFeishuStreamSink>;
-      placeholder: { messageId: string; cardId?: string; elementId?: string };
-      lastText?: string;
-      finalized?: boolean;
-    };
-    const streamSinks = new Map<string, StreamSinkEntry>();
-    const streamSinkInitPromises = new Map<string, Promise<StreamSinkEntry>>();
-    let unboundStreamSink: StreamSinkEntry | null = null;
-    let lastUpdatedOcMessageId: string | null = null;
-    let lastCompletedOcMessageId: string | null = null;
+    let pendingReplyText: string | null = null;
+    let pendingReplyFooter: string | null = null;
+    let streamFinalized = false;
+    let idleSeen = false;
+    let completeSeen = false;
+    let fallbackToIsComplete = false;
+    let statusPoller: { start: () => void; stop: () => void } | null = null;
+    let modelParam: { providerID: string; modelID: string } | null = null;
+    let promptStartedAt = Date.now();
+    let buildFooterFromSession: () => Promise<string | null> = async () => null;
+  type StreamSinkEntry = {
+    sink: ReturnType<typeof createFeishuStreamSink>;
+    placeholder: { messageId: string; cardId?: string; elementId?: string };
+    lastText?: string;
+    finalized?: boolean;
+  };
+  const streamSinks = new Map<string, StreamSinkEntry>();
+  const streamSinkInitPromises = new Map<string, Promise<StreamSinkEntry>>();
+  let unboundStreamSink: StreamSinkEntry | null = null;
+  let lastUpdatedOcMessageId: string | null = null;
+  let lastCompletedOcMessageId: string | null = null;
 
-    const streamingConfig = streaming || {};
-    streamingEnabled =
-      streamingConfig.enabled === true &&
-      provider.id === "feishu" &&
-      typeof provider.updateMessage === "function";
-    streamTimeoutGraceMs =
-      typeof streamingConfig.timeoutGraceMs === "number"
-        ? streamingConfig.timeoutGraceMs
-        : 900000;
+  const streamingConfig = streaming || {};
+  streamingEnabled =
+    streamingConfig.enabled === true &&
+    provider.id === "feishu" &&
+    typeof provider.updateMessage === "function";
+  streamTimeoutGraceMs =
+    typeof streamingConfig.timeoutGraceMs === "number"
+      ? streamingConfig.timeoutGraceMs
+      : 900000;
 
-    const ensureActiveStreamState = (): ActiveStreamState => {
-      const existing = activeStreams.get(message.threadId);
-      if (existing) {
-        if (!existing.byOcMessageId) {
-          existing.byOcMessageId = new Map();
-        }
-        return existing;
+  const ensureActiveStreamState = (): ActiveStreamState => {
+    const existing = activeStreams.get(message.threadId);
+    if (existing) {
+      existing.sessionId = sessionId;
+      if (!existing.byOcMessageId) {
+        existing.byOcMessageId = new Map();
       }
-      const state: ActiveStreamState = {
-        byOcMessageId: new Map<string, { messageId: string; cardId?: string; elementId?: string }>(),
-      };
-      activeStreams.set(message.threadId, state);
-      return state;
+      return existing;
+    }
+    const state: ActiveStreamState = {
+      sessionId,
+      byOcMessageId: new Map<string, { messageId: string; cardId?: string; elementId?: string }>(),
     };
+    activeStreams.set(message.threadId, state);
+    return state;
+  };
 
-    const createStreamSinkEntry = async (): Promise<StreamSinkEntry> => {
-      const sink = createFeishuStreamSink({
-        provider,
-        message,
-        throttleMs: streamingConfig.throttleMs ?? 700,
-        maxMessageChars: streamingConfig.maxMessageChars ?? 20000,
-        mode: streamingConfig.mode ?? "update",
-        logger,
-      });
-      const placeholder = await sink.start();
-      return { sink, placeholder };
-    };
+  const createStreamSinkEntry = async (): Promise<StreamSinkEntry> => {
+    const sink = createFeishuStreamSink({
+      provider,
+      message,
+      throttleMs: streamingConfig.throttleMs ?? 700,
+      maxMessageChars: streamingConfig.maxMessageChars ?? 20000,
+      mode: streamingConfig.mode ?? "update",
+      logger,
+    });
+    const placeholder = await sink.start();
+    return { sink, placeholder };
+  };
 
-    const bindStreamSinkEntry = (ocMessageId: string, entry: StreamSinkEntry) => {
-      const state = ensureActiveStreamState();
-      state.byOcMessageId?.set(ocMessageId, {
-        messageId: entry.placeholder.messageId,
-        cardId: entry.placeholder.cardId,
-        elementId: entry.placeholder.elementId,
-      });
-      state.placeholderId = entry.placeholder.messageId;
-      state.cardId = entry.placeholder.cardId;
-      state.elementId = entry.placeholder.elementId;
-    };
+  const bindStreamSinkEntry = (ocMessageId: string, entry: StreamSinkEntry) => {
+    const state = ensureActiveStreamState();
+    state.byOcMessageId?.set(ocMessageId, {
+      messageId: entry.placeholder.messageId,
+      cardId: entry.placeholder.cardId,
+      elementId: entry.placeholder.elementId,
+    });
+    state.placeholderId = entry.placeholder.messageId;
+    state.cardId = entry.placeholder.cardId;
+    state.elementId = entry.placeholder.elementId;
+  };
 
-    const getOrCreateStreamSinkEntry = async (ocMessageId: string) => {
-      const existing = streamSinks.get(ocMessageId);
-      if (existing) return existing;
-      const pending = streamSinkInitPromises.get(ocMessageId);
-      if (pending) return await pending;
-      const initPromise = (async () => {
-        let entry: StreamSinkEntry;
-        if (unboundStreamSink) {
-          entry = unboundStreamSink;
-          unboundStreamSink = null;
-        } else {
-          entry = await createStreamSinkEntry();
-        }
-        streamSinks.set(ocMessageId, entry);
-        bindStreamSinkEntry(ocMessageId, entry);
-        streamSinkInitPromises.delete(ocMessageId);
-        return entry;
-      })();
-      streamSinkInitPromises.set(ocMessageId, initPromise);
-      return await initPromise;
-    };
-
-    const resetStreamSinks = () => {
-      if (unboundStreamSink && typeof unboundStreamSink.sink.detach === "function") {
-        unboundStreamSink.sink.detach();
+  const getOrCreateStreamSinkEntry = async (ocMessageId: string) => {
+    const existing = streamSinks.get(ocMessageId);
+    if (existing) return existing;
+    const pending = streamSinkInitPromises.get(ocMessageId);
+    if (pending) return await pending;
+    const initPromise = (async () => {
+      let entry: StreamSinkEntry;
+      if (unboundStreamSink) {
+        entry = unboundStreamSink;
+        unboundStreamSink = null;
+      } else {
+        entry = await createStreamSinkEntry();
       }
-      unboundStreamSink = null;
-      for (const entry of streamSinks.values()) {
-        if (typeof entry.sink.detach === "function") {
-          entry.sink.detach();
-        }
+      streamSinks.set(ocMessageId, entry);
+      bindStreamSinkEntry(ocMessageId, entry);
+      streamSinkInitPromises.delete(ocMessageId);
+      return entry;
+    })();
+    streamSinkInitPromises.set(ocMessageId, initPromise);
+    return await initPromise;
+  };
+
+  const resetStreamSinks = () => {
+    if (unboundStreamSink && typeof unboundStreamSink.sink.detach === "function") {
+      unboundStreamSink.sink.detach();
+    }
+    unboundStreamSink = null;
+    for (const entry of streamSinks.values()) {
+      if (typeof entry.sink.detach === "function") {
+        entry.sink.detach();
       }
-      streamSinks.clear();
-      streamSinkInitPromises.clear();
-      lastUpdatedOcMessageId = null;
-      lastCompletedOcMessageId = null;
+    }
+    streamSinks.clear();
+    streamSinkInitPromises.clear();
+    lastUpdatedOcMessageId = null;
+    lastCompletedOcMessageId = null;
+    activeStreams.delete(message.threadId);
+  };
+
+  const hasStreamSinks = () => streamSinks.size > 0 || Boolean(unboundStreamSink);
+
+  const finalizeStreamSinks = async (replyText: string, footer: string) => {
+    const targetId = lastCompletedOcMessageId || lastUpdatedOcMessageId;
+    const targetEntry = targetId ? streamSinks.get(targetId) : undefined;
+    const entries = new Set<StreamSinkEntry>();
+    if (targetEntry) entries.add(targetEntry);
+    for (const entry of streamSinks.values()) {
+      entries.add(entry);
+    }
+    if (unboundStreamSink) {
+      entries.add(unboundStreamSink);
+    }
+
+    for (const entry of entries) {
+      if (entry.finalized) continue;
+      const fallbackText = entry === targetEntry ? replyText : "";
+      const finalText = entry.lastText ?? fallbackText;
+      await entry.sink.finalize(finalText, footer);
+      entry.finalized = true;
+    }
+  };
+
+  const stopStatusPoller = () => {
+    if (statusPoller) {
+      statusPoller.stop();
+    }
+  };
+
+    const finalizeStreamingIfReady = async (reason: "idle" | "complete") => {
+      if (streamFinalized || !streamingEnabled || !hasStreamSinks()) return;
+      if (reason === "complete" && !fallbackToIsComplete) {
+        completeSeen = true;
+        return;
+      }
+      if (reason === "idle") {
+        idleSeen = true;
+      }
+      if (pendingReplyFooter === null && reason === "idle") {
+        pendingReplyFooter = await buildFooterFromSession();
+      }
+      if (pendingReplyText === null || pendingReplyFooter === null) {
+        if (reason === "complete") {
+          completeSeen = true;
+        }
+        return;
+      }
+    streamController?.stop();
+    stopStatusPoller();
+    await finalizeStreamSinks(pendingReplyText, pendingReplyFooter);
+    streamFinalized = true;
+    const active = activeRequests.get(message.threadId);
+    if (active?.sessionId === sessionId) {
+      activeRequests.delete(message.threadId);
+    }
+    const streamState = activeStreams.get(message.threadId);
+    if (streamState?.sessionId === sessionId) {
       activeStreams.delete(message.threadId);
+    }
+  };
+
+  const createSessionStatusPoller = (options: { intervalMs: number }) => {
+    const sessionApi = getClient().session as unknown as {
+      status?: (options?: unknown) => Promise<{ data?: unknown }>;
+    };
+    const statusRequest = typeof sessionApi.status === "function"
+      ? sessionApi.status.bind(sessionApi)
+      : undefined;
+    if (typeof statusRequest !== "function") {
+      fallbackToIsComplete = true;
+      logWith(logger, "Session status polling unavailable; fallback to stream completion", "debug");
+      return { start: () => { }, stop: () => { } };
+    }
+
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const stop = () => {
+      stopped = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
     };
 
-    const hasStreamSinks = () => streamSinks.size > 0 || Boolean(unboundStreamSink);
+    const readStatus = async () => {
+      try {
+        const response = await statusRequest({
+          query: { directory },
+        });
+        const data = response?.data;
+        let status: string | undefined;
+        if (isRecord(data)) {
+          const value = data[sessionId];
+          if (typeof value === "string") {
+            status = value;
+          }
+        }
+        if (!status) {
+          logWith(logger, "Session status polling missing status; fallback to stream completion", "debug");
+          fallbackToIsComplete = true;
+          await finalizeStreamingIfReady("complete");
+          stop();
+          return;
+        }
+        if (status === "idle") {
+          await finalizeStreamingIfReady("idle");
+          stop();
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logWith(logger, `Session status polling failed: ${message}`, "debug");
+        fallbackToIsComplete = true;
+        await finalizeStreamingIfReady("complete");
+        stop();
+        return;
+      }
 
-    const finalizeStreamSinks = async (replyText: string, footer: string) => {
-      const targetId = lastCompletedOcMessageId || lastUpdatedOcMessageId;
-      let targetEntry = targetId ? streamSinks.get(targetId) : undefined;
-      if (!targetEntry && unboundStreamSink) {
-        targetEntry = unboundStreamSink;
-      }
-      if (targetEntry && !targetEntry.finalized) {
-        await targetEntry.sink.finalize(replyText, footer);
-        targetEntry.finalized = true;
-      }
-
-      for (const entry of streamSinks.values()) {
-        if (entry.finalized || !entry.lastText) continue;
-        await entry.sink.finalize(entry.lastText, "");
-        entry.finalized = true;
-      }
-      if (unboundStreamSink && unboundStreamSink !== targetEntry && unboundStreamSink.lastText) {
-        await unboundStreamSink.sink.finalize(unboundStreamSink.lastText, "");
-        unboundStreamSink.finalized = true;
+      if (!stopped) {
+        timer = setTimeout(readStatus, options.intervalMs);
       }
     };
+
+    return {
+      start: () => {
+        if (!stopped) {
+          void readStatus();
+        }
+      },
+      stop,
+    };
+  };
 
   try {
-    const modelParam = await resolveModel(
+    modelParam = await resolveModel(
       getClient,
       directory,
       sessionId,
@@ -1055,7 +1177,35 @@ export async function sendPrompt({
     }
 
     const parts = [{ type: "text" as const, text: message.text }];
-    const promptStartedAt = Date.now();
+    promptStartedAt = Date.now();
+    buildFooterFromSession = async () => {
+      if (!modelParam) return null;
+      try {
+        const messagesResp = await getClient().session.messages({
+          path: { id: sessionId },
+          query: { directory, limit: 50 },
+        });
+        const messageItems = messagesResp.data || [];
+        for (let i = messageItems.length - 1; i >= 0; i -= 1) {
+          const item = messageItems[i];
+          if (!isRecord(item)) continue;
+          const info = item.info;
+          if (!isRecord(info) || info.role !== "assistant") continue;
+          const footer = await buildFooter({ data: { info } }, {
+            sessionId,
+            model: modelParam,
+            directory,
+            startedAt: promptStartedAt,
+            getClient,
+          });
+          return footer;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logWith(logger, `Session footer lookup failed: ${message}`, "debug");
+      }
+      return null;
+    };
 
     try {
       if (streamingEnabled) {
@@ -1075,14 +1225,15 @@ export async function sendPrompt({
         startedAt: promptStartedAt,
         onTextUpdate: streamingEnabled
           ? async (messageId, text, isComplete) => {
-              const entry = await getOrCreateStreamSinkEntry(messageId);
-              entry.lastText = text;
-              await entry.sink.render(text);
-              lastUpdatedOcMessageId = messageId;
-              if (isComplete) {
-                lastCompletedOcMessageId = messageId;
-              }
+            const entry = await getOrCreateStreamSinkEntry(messageId);
+            entry.lastText = text;
+            await entry.sink.render(text);
+            lastUpdatedOcMessageId = messageId;
+            if (isComplete) {
+              lastCompletedOcMessageId = messageId;
+              await finalizeStreamingIfReady("complete");
             }
+          }
           : undefined,
         onQuestionAsked: async (questionRequest) => {
           const normalized = normalizeQuestionInputs(questionRequest);
@@ -1141,6 +1292,10 @@ export async function sendPrompt({
       });
 
       streamController.start();
+      if (streamingEnabled) {
+        statusPoller = createSessionStatusPoller({ intervalMs: 2000 });
+        statusPoller.start();
+      }
     } catch (error) {
       const described = describeError(error);
       logWith(
@@ -1149,6 +1304,8 @@ export async function sendPrompt({
         "warn",
       );
       streamController = null;
+      stopStatusPoller();
+      statusPoller = null;
       resetStreamSinks();
     }
 
@@ -1176,6 +1333,16 @@ export async function sendPrompt({
         "error",
       );
       throw new OpenCodeApiError(status, errorMessage);
+    }
+
+    if (streamingEnabled && hasStreamSinks()) {
+      pendingReplyText = "";
+      if (idleSeen) {
+        await finalizeStreamingIfReady("idle");
+      } else if (fallbackToIsComplete && completeSeen) {
+        await finalizeStreamingIfReady("complete");
+      }
+      return;
     }
 
     const feishuClient = provider.id === "feishu" ? provider.getFeishuClient?.() : null;
@@ -1221,18 +1388,29 @@ export async function sendPrompt({
     });
 
     await uploadToolAttachments(attachments, provider, message, logger);
-    if (streamingEnabled && hasStreamSinks()) {
-      streamController?.stop();
-      await finalizeStreamSinks(replyText, footer);
-    } else {
-      const combined = replyText.trim();
-      const finalText = combined ? `${combined}\n\n${footer}` : footer;
-      if (finalText.trim().length > 0) {
-        await sendReply(provider, message, finalText);
-      }
+    const combined = replyText.trim();
+    const finalText = combined ? `${combined}\n\n${footer}` : footer;
+    if (finalText.trim().length > 0) {
+      await sendReply(provider, message, finalText);
     }
   } catch (error) {
     const described = describeError(error);
+    const isAbortError = (value: unknown) => {
+      if (!value || typeof value !== "object") return false;
+      const record = value as Record<string, unknown>;
+      return record.name === "AbortError" || record.message === "abort";
+    };
+    const isAbort = isAbortError(error) || isAbortError((error as { cause?: unknown } | null)?.cause);
+    if (isAbort) {
+      stopStatusPoller();
+      statusPoller = null;
+      if (streamController) {
+        streamController.stop();
+      }
+      resetStreamSinks();
+      streamFinalized = true;
+      return;
+    }
     const errorWithCause = error as { cause?: unknown } | null;
     const cause = errorWithCause?.cause;
     const isHeadersTimeout = (value: unknown) => {
@@ -1290,6 +1468,8 @@ export async function sendPrompt({
         })();
       }, graceMs);
     } else {
+      stopStatusPoller();
+      statusPoller = null;
       if (streamController) {
         streamController.stop();
       }
@@ -1312,12 +1492,21 @@ export async function sendPrompt({
     });
     await sendReply(provider, message, `✗ ${toUserErrorMessage(error)}\n\n${report}`);
   } finally {
-    activeRequests.delete(message.threadId);
-    if (!deferStreamStop) {
+    const keepStreaming = streamingEnabled && hasStreamSinks() && !streamFinalized;
+    if (!keepStreaming) {
+      const active = activeRequests.get(message.threadId);
+      if (active?.sessionId === sessionId) {
+        activeRequests.delete(message.threadId);
+      }
+      stopStatusPoller();
+      statusPoller = null;
       if (streamController) {
         streamController.stop();
       }
-      activeStreams.delete(message.threadId);
+      const streamState = activeStreams.get(message.threadId);
+      if (streamState?.sessionId === sessionId) {
+        activeStreams.delete(message.threadId);
+      }
     }
   }
 }

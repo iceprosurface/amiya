@@ -20,7 +20,6 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
   const { config, logger } = options
   const feishuClient: FeishuClientInstance = createFeishuClient(config, logger)
   const eventClient: FeishuEventClientInstance = createFeishuEventClient(config, logger)
-  const useCardMessages = config.useCardMessages !== false
 
   const log = (msg: string, level: 'debug' | 'info' | 'warn' | 'error' = 'info') => {
     if (logger) logger(`[FeishuProvider] ${msg}`, level)
@@ -348,14 +347,12 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     target: OutgoingTarget,
     message: OutgoingMessage,
   ): Promise<{ messageId: string; cardId?: string; elementId?: string }> {
-    const messageId = useCardMessages
-      ? await feishuClient.sendAssistantCardMessageWithId?.(target.channelId, {
-          text: message.text,
-          streaming: message.mode === 'streaming',
-          status: message.status,
-          messageParts: message.messageParts,
-        })
-      : await feishuClient.sendRichTextMessageWithId(target.channelId, message.text)
+    const messageId = await feishuClient.sendAssistantCardMessageWithId?.(target.channelId, {
+      text: message.text,
+      streaming: message.mode === 'streaming',
+      status: message.status,
+      messageParts: message.messageParts,
+    })
     if (!messageId) {
       throw new Error(`Failed to send message to ${target.channelId}`)
     }
@@ -384,27 +381,21 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
     messageOut: OutgoingMessage,
   ): Promise<{ messageId: string; cardId?: string; elementId?: string }> {
     const preferThread = Boolean(message.threadId)
-    let messageId = useCardMessages
-      ? await feishuClient.replyAssistantCardMessageWithId?.(message.messageId, {
-          text: messageOut.text,
-          streaming: messageOut.mode === 'streaming',
-          status: messageOut.status,
-          messageParts: messageOut.messageParts,
-        }, {
-          replyInThread: preferThread,
-        })
-      : await feishuClient.replyRichTextMessageWithId(message.messageId, messageOut.text, {
-          replyInThread: preferThread,
-        })
+    let messageId = await feishuClient.replyAssistantCardMessageWithId?.(message.messageId, {
+      text: messageOut.text,
+      streaming: messageOut.mode === 'streaming',
+      status: messageOut.status,
+      messageParts: messageOut.messageParts,
+    }, {
+      replyInThread: preferThread,
+    })
     if (!messageId && preferThread) {
-      messageId = useCardMessages
-        ? await feishuClient.replyAssistantCardMessageWithId?.(message.messageId, {
-            text: messageOut.text,
-            streaming: messageOut.mode === 'streaming',
-            status: messageOut.status,
-            messageParts: messageOut.messageParts,
-          })
-        : await feishuClient.replyRichTextMessageWithId(message.messageId, messageOut.text)
+      messageId = await feishuClient.replyAssistantCardMessageWithId?.(message.messageId, {
+        text: messageOut.text,
+        streaming: messageOut.mode === 'streaming',
+        status: messageOut.status,
+        messageParts: messageOut.messageParts,
+      })
     }
     if (!messageId) {
       throw new Error(`Failed to reply to message ${message.messageId}`)
@@ -435,27 +426,25 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
 
   async function updateMessage(messageId: string, messageOut: OutgoingMessage): Promise<boolean> {
     let ok = false
-    if (useCardMessages && messageOut.messageParts && messageOut.messageParts.length > 0) {
+    if (messageOut.messageParts && messageOut.messageParts.length > 0) {
       ok = await feishuClient.updateAssistantCardMessageWithId?.(messageId, {
         text: messageOut.text,
         streaming: messageOut.mode === 'streaming',
         status: messageOut.status,
         messageParts: messageOut.messageParts,
       }) ?? false
-    } else if (useCardMessages && messageOut.cardId && messageOut.elementId) {
+    } else if (messageOut.cardId && messageOut.elementId) {
       ok = await feishuClient.updateAssistantCardElementContentWithId?.(
         messageOut.cardId,
         messageOut.elementId,
         messageOut.text,
       ) ?? false
-    } else if (useCardMessages) {
+    } else {
       ok = await feishuClient.updateAssistantCardMessageWithId?.(messageId, {
         text: messageOut.text,
         streaming: messageOut.mode === 'streaming',
         status: messageOut.status,
       }) ?? false
-    } else {
-      ok = await feishuClient.updateRichTextMessage(messageId, messageOut.text)
     }
     if (!ok) {
       log(`Failed to update message ${messageId}`, 'warn')

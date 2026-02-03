@@ -32,14 +32,15 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
   const streamState = activeStreams.get(message.threadId);
   if (streamState && provider.updateMessage) {
     const updates: Array<Promise<boolean>> = [];
-    if (streamState.byOcMessageId && streamState.byOcMessageId.size > 0) {
-      for (const entry of streamState.byOcMessageId.values()) {
-        updates.push(provider.updateMessage(entry.messageId, {
-          text: t("commands.abortStatus"),
-          cardId: entry.cardId,
-          elementId: entry.elementId,
-        }));
-      }
+    const activeEntry = streamState.byOcMessageId && streamState.byOcMessageId.size > 0
+      ? Array.from(streamState.byOcMessageId.values()).at(-1)
+      : undefined;
+    if (activeEntry) {
+      updates.push(provider.updateMessage(activeEntry.messageId, {
+        text: t("commands.abortStatus"),
+        cardId: activeEntry.cardId,
+        elementId: activeEntry.elementId,
+      }));
     } else if (streamState.placeholderId) {
       const placeholderId = streamState.placeholderId;
       updates.push(provider.updateMessage(placeholderId, {

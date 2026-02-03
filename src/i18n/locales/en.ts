@@ -234,6 +234,7 @@ export const en = {
       thinkingTitleDone: "Thinking (completed)",
       thinkingTitleStreaming: "Thinking",
       stepInProgress: "Subtask (in progress)",
+      stepDone: "Subtask (completed)",
       stepBodyInProgress: "In progress",
       metaTitle: "Metadata",
       metaTitleWithContext: "Context {{value}}",

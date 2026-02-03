@@ -13,7 +13,6 @@ import {
   type AssistantToolRun,
 } from './assistant-card-state'
 import { t } from '../../i18n/index.js'
-import { feishuPostToJson, markdownToFeishuPost } from './markdown-adapter.js'
 
 export function createFeishuClient(
   config: FeishuConfig,
@@ -259,9 +258,7 @@ export function createFeishuClient(
       : params.status === 'warning'
         ? 'orange'
         : 'blue'
-    const title = params.title && params.title.trim().length > 0
-      ? params.title
-      : 'Amiya'
+    const title = params.title?.trim() ?? ''
 
     const TOOL_OUTPUT_MAX_INLINE_CHARS = 1800
     const TOOL_INPUT_MAX_INLINE_CHARS = 1200
@@ -651,9 +648,21 @@ export function createFeishuClient(
           })
         }
 
-        const { steps } = buildAssistantStepsFromParts(group.parts)
+        const { steps, hasStepMarkers } = buildAssistantStepsFromParts(group.parts)
 
         for (const step of steps) {
+          if (hasStepMarkers) {
+            const stepLabel = step.completed
+              ? t('feishu.stepDone')
+              : params.streaming
+                ? t('feishu.stepInProgress')
+                : t('labels.subtask')
+            const title = typeof step.title === 'string' ? step.title.trim() : ''
+            elements.push({
+              tag: 'markdown',
+              content: title ? `**${stepLabel}** ${title}` : `**${stepLabel}**`,
+            })
+          }
 
           const reasoningText = collectReasoningText(step.parts)
           if (reasoningText) {
@@ -870,6 +879,18 @@ export function createFeishuClient(
       }
     }
 
+    const header = title
+      ? {
+          template,
+          title: {
+            content: params.streaming
+              ? t('feishu.cardTitleStreaming', { title })
+              : title,
+            tag: 'plain_text',
+          },
+        }
+      : undefined
+
     return {
       schema: '2.0',
       config: {
@@ -880,15 +901,7 @@ export function createFeishuClient(
         },
         ...(params.streaming ? { streaming_mode: true } : {}),
       },
-      header: {
-        template,
-        title: {
-          content: params.streaming
-            ? t('feishu.cardTitleStreaming', { title })
-            : title,
-          tag: 'plain_text',
-        },
-      },
+      ...(header ? { header } : {}),
       body: {
         elements,
       },
@@ -1469,214 +1482,6 @@ export function createFeishuClient(
         return null
       }
     },
-    async sendTextMessage(chatId: string, text: string): Promise<boolean> {
-      try {
-        await client.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text }),
-          },
-        })
-        log(`Message sent to ${chatId}`, 'debug')
-        return true
-      } catch (error) {
-        log(`Send message failed: ${error}`, 'error')
-        return false
-      }
-    },
-
-    async sendRichTextMessage(chatId: string, markdown: string): Promise<boolean> {
-      try {
-        const post = markdownToFeishuPost(markdown)
-        await client.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chatId,
-            msg_type: 'post',
-            content: feishuPostToJson(post),
-          },
-        })
-        log(`Rich text message sent to ${chatId}`, 'debug')
-        return true
-      } catch (error) {
-        log(`Send rich text message failed: ${error}`, 'error')
-        return false
-      }
-    },
-
-    async sendTextMessageWithId(chatId: string, text: string): Promise<string | null> {
-      try {
-        const result: unknown = await client.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chatId,
-            msg_type: 'text',
-            content: JSON.stringify({ text }),
-          },
-        })
-        const messageId = extractMessageId(result)
-        if (!messageId) {
-          log(`Message sent to ${chatId} but missing message_id`, 'warn')
-        }
-        return messageId
-      } catch (error) {
-        log(`Send message failed: ${error}`, 'error')
-        return null
-      }
-    },
-
-    async sendRichTextMessageWithId(chatId: string, markdown: string): Promise<string | null> {
-      try {
-        const post = markdownToFeishuPost(markdown)
-        const result: unknown = await client.im.message.create({
-          params: { receive_id_type: 'chat_id' },
-          data: {
-            receive_id: chatId,
-            msg_type: 'post',
-            content: feishuPostToJson(post),
-          },
-        })
-        const messageId = extractMessageId(result)
-        if (!messageId) {
-          log(`Rich text message sent to ${chatId} but missing message_id`, 'warn')
-        }
-        return messageId
-      } catch (error) {
-        log(`Send rich text message failed: ${error}`, 'error')
-        return null
-      }
-    },
-
-    async replyMessage(messageId: string, text: string, options?: { replyInThread?: boolean }): Promise<boolean> {
-      try {
-        const params: Parameters<typeof client.im.message.reply>[0] = {
-          path: { message_id: messageId },
-          data: {
-            msg_type: 'text',
-            content: JSON.stringify({ text }),
-          },
-        }
-
-        if (options?.replyInThread) {
-          ; (params.data as Record<string, unknown>).reply_in_thread = true
-        }
-
-        await client.im.message.reply(params)
-        return true
-      } catch (error) {
-        log(`Reply message failed: ${error}`, 'error')
-        return false
-      }
-    },
-
-    async replyRichTextMessage(messageId: string, markdown: string, options?: { replyInThread?: boolean }): Promise<boolean> {
-      try {
-        const params: Parameters<typeof client.im.message.reply>[0] = {
-          path: { message_id: messageId },
-          data: {
-            msg_type: 'post',
-            content: feishuPostToJson(markdownToFeishuPost(markdown)),
-          },
-        }
-
-        if (options?.replyInThread) {
-          ; (params.data as Record<string, unknown>).reply_in_thread = true
-        }
-
-        await client.im.message.reply(params)
-        return true
-      } catch (error) {
-        log(`Reply rich text message failed: ${error}`, 'error')
-        return false
-      }
-    },
-
-    async replyMessageWithId(
-      messageId: string,
-      text: string,
-      options?: { replyInThread?: boolean },
-    ): Promise<string | null> {
-      try {
-        const params: Parameters<typeof client.im.message.reply>[0] = {
-          path: { message_id: messageId },
-          data: {
-            msg_type: 'text',
-            content: JSON.stringify({ text }),
-          },
-        }
-
-        if (options?.replyInThread) {
-          ; (params.data as Record<string, unknown>).reply_in_thread = true
-        }
-
-        const result: unknown = await client.im.message.reply(params)
-        return extractMessageId(result)
-      } catch (error) {
-        log(`Reply message failed: ${error}`, 'error')
-        return null
-      }
-    },
-
-    async replyRichTextMessageWithId(
-      messageId: string,
-      markdown: string,
-      options?: { replyInThread?: boolean },
-    ): Promise<string | null> {
-      try {
-        const params: Parameters<typeof client.im.message.reply>[0] = {
-          path: { message_id: messageId },
-          data: {
-            msg_type: 'post',
-            content: feishuPostToJson(markdownToFeishuPost(markdown)),
-          },
-        }
-
-        if (options?.replyInThread) {
-          ; (params.data as Record<string, unknown>).reply_in_thread = true
-        }
-
-        const result: unknown = await client.im.message.reply(params)
-        return extractMessageId(result)
-      } catch (error) {
-        log(`Reply rich text message failed: ${error}`, 'error')
-        return null
-      }
-    },
-
-    async updateTextMessage(messageId: string, text: string): Promise<boolean> {
-      try {
-        await client.im.message.update({
-          path: { message_id: messageId },
-          data: {
-            msg_type: 'text',
-            content: JSON.stringify({ text }),
-          },
-        })
-        return true
-      } catch (error) {
-        log(`Update message failed: ${error}`, 'error')
-        return false
-      }
-    },
-
-    async updateRichTextMessage(messageId: string, markdown: string): Promise<boolean> {
-      try {
-        await client.im.message.update({
-          path: { message_id: messageId },
-          data: {
-            msg_type: 'post',
-            content: feishuPostToJson(markdownToFeishuPost(markdown)),
-          },
-        })
-        return true
-      } catch (error) {
-        log(`Update rich text message failed: ${error}`, 'error')
-        return false
-      }
-    },
-
     isChatAllowed(chatId: string): boolean {
       if (!config.allowedChatIds || config.allowedChatIds.length === 0) {
         return true
