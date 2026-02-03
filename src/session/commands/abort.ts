@@ -1,4 +1,5 @@
 import { initializeOpencodeForDirectory } from "../../opencode.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import { activeRequests, activeStreams } from "../state.js";
 import { resolveAccessibleDirectory } from "./shared.js";
@@ -8,7 +9,7 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
   const { provider } = options;
   const active = activeRequests.get(message.threadId);
   if (!active) {
-    await sendReply(provider, message, "没有需要中止的活动请求。");
+    await sendReply(provider, message, t("commands.abortNone"));
     return true;
   }
   active.controller.abort(new Error("abort"));
@@ -31,12 +32,12 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
   const streamState = activeStreams.get(message.threadId);
   if (streamState && provider.updateMessage) {
     await provider.updateMessage(streamState.placeholderId, {
-      text: "🛑 已中止",
+      text: t("commands.abortStatus"),
       cardId: streamState.cardId,
       elementId: streamState.elementId,
     });
     activeStreams.delete(message.threadId);
   }
-  await sendReply(provider, message, "🛑 已中止当前请求。");
+  await sendReply(provider, message, t("commands.abortDone"));
   return true;
 };

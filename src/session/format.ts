@@ -309,7 +309,7 @@ export function extractTextFromPromptResult(result: unknown): string {
         const agent = typeof part.agent === "string" ? part.agent : "";
         const prompt = typeof part.prompt === "string" ? part.prompt : "";
         const label = description || prompt || t("labels.subtask");
-        const agentInfo = agent ? `（agent: ${agent}）` : "";
+        const agentInfo = agent ? t("labels.agentInfo", { agent }) : "";
         subtaskLines.push(`- ${label}${agentInfo}`);
       } else if (type === "tool") {
         const toolName = typeof part.tool === "string" ? part.tool : "tool";
@@ -469,7 +469,7 @@ export function extractTextWithAttachmentsFromPromptResult(
         const agent = typeof part.agent === "string" ? part.agent : "";
         const prompt = typeof part.prompt === "string" ? part.prompt : "";
         const label = description || prompt || t("labels.subtask");
-        const agentInfo = agent ? `（agent: ${agent}）` : "";
+        const agentInfo = agent ? t("labels.agentInfo", { agent }) : "";
         subtaskLines.push(`- ${label}${agentInfo}`);
       } else if (type === "tool") {
         const toolName = typeof part.tool === "string" ? part.tool : "tool";

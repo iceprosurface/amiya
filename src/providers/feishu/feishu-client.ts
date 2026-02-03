@@ -1,9 +1,10 @@
 import * as lark from '@larksuiteoapi/node-sdk'
 import type { FeishuConfig } from './feishu-config'
 import {
-  ASSISTANT_TOOL_OUTPUT_MARKER,
   buildAssistantStepsFromParts,
   extractAmiyaXml,
+  getAssistantSubtaskMarker,
+  getAssistantToolOutputMarker,
   parseAssistantToolRuns,
   splitAssistantDetails,
   splitAssistantThinkingBlock,
@@ -11,6 +12,7 @@ import {
   type AssistantMessagePart,
   type AssistantToolRun,
 } from './assistant-card-state'
+import { t } from '../../i18n/index.js'
 import { feishuPostToJson, markdownToFeishuPost } from './markdown-adapter.js'
 
 export function createFeishuClient(
@@ -266,7 +268,10 @@ export function createFeishuClient(
     const TOOL_OUTPUT_MAX_INLINE_LINES = 50
 
     const extractContextPercent = (text: string): string | null => {
-      const match = text.match(/上下文\s*([0-9.]+%)/)
+      const contextLabel = t('stats.context', { value: '' }).trim()
+      if (!contextLabel) return null
+      const escaped = contextLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = text.match(new RegExp(`${escaped}\\s*([0-9.]+%)`))
       return match ? match[1] : null
     }
 
@@ -297,28 +302,30 @@ export function createFeishuClient(
           if (!inputText) return '-'
           const lines = inputText.split('\n')
           if (lines.length > TOOL_OUTPUT_MAX_INLINE_LINES) {
-            return '输入过长，请查看附件/日志'
+            return t('feishu.inputTooLong')
           }
           const trimmed = inputText.replace(/\s+$/, '')
           if (trimmed.length > TOOL_INPUT_MAX_INLINE_CHARS) {
-            return '输入过长，请查看附件/日志'
+            return t('feishu.inputTooLong')
           }
           return trimmed
         })()
 
         const outputField = (() => {
           if (run.outputTooLong) {
-            const hint = run.outputFileName ? `输出在文件中：${run.outputFileName}` : '输出过长，请查看附件/日志'
+            const hint = run.outputFileName
+              ? t('feishu.outputInFile', { fileName: run.outputFileName })
+              : t('feishu.outputTooLong')
             return hint
           }
           if (!outputText) return '-'
           const lines = outputText.split('\n')
           if (lines.length > TOOL_OUTPUT_MAX_INLINE_LINES) {
-            return '输出过长，请查看附件/日志'
+            return t('feishu.outputTooLong')
           }
           const trimmed = outputText.replace(/\s+$/, '')
           if (trimmed.length > TOOL_OUTPUT_MAX_INLINE_CHARS) {
-            return '输出过长，请查看附件/日志'
+            return t('feishu.outputTooLong')
           }
           return trimmed
         })()
@@ -328,23 +335,23 @@ export function createFeishuClient(
           fields: [
             {
               is_short: true,
-              text: { tag: 'plain_text', content: `工具：${run.tool}` },
+              text: { tag: 'plain_text', content: t('feishu.toolLabel', { tool: run.tool }) },
             },
             {
               is_short: true,
-              text: { tag: 'plain_text', content: `状态：${statusText}` },
+              text: { tag: 'plain_text', content: t('feishu.statusLabel', { status: statusText }) },
             },
             {
               is_short: true,
-              text: { tag: 'plain_text', content: `耗时：${durationText}` },
+              text: { tag: 'plain_text', content: t('feishu.durationLabel', { duration: durationText }) },
             },
             {
               is_short: false,
-              text: { tag: 'plain_text', content: `输入：\n${inputField}` },
+              text: { tag: 'plain_text', content: t('feishu.inputLabel', { input: inputField }) },
             },
             {
               is_short: false,
-              text: { tag: 'plain_text', content: `输出：\n${outputField}` },
+              text: { tag: 'plain_text', content: t('feishu.outputLabel', { output: outputField }) },
             },
           ],
         })
@@ -445,8 +452,8 @@ export function createFeishuClient(
         const description = typeof part.description === 'string' ? part.description : ''
         const agent = typeof part.agent === 'string' ? part.agent : ''
         const prompt = typeof part.prompt === 'string' ? part.prompt : ''
-        const label = description || prompt || '子任务'
-        const agentInfo = agent ? `（agent: ${agent}）` : ''
+        const label = description || prompt || t('labels.subtask')
+        const agentInfo = agent ? t('labels.agentInfo', { agent }) : ''
         lines.push(`- ${label}${agentInfo}`)
       }
       return lines
@@ -478,13 +485,15 @@ export function createFeishuClient(
         }
       }
       const showMessageHeader = grouped.length > 1
-      const reasoningLabel = params.streaming ? '思考中' : '思考'
+      const reasoningLabel = params.streaming
+        ? t('feishu.reasoningStreaming')
+        : t('feishu.reasoningLabel')
 
       grouped.forEach((group, groupIndex) => {
         if (showMessageHeader) {
           elements.push({
             tag: 'markdown',
-            content: `**回复 ${groupIndex + 1}**`,
+            content: t('feishu.replyGroup', { index: groupIndex + 1 }),
           })
         }
 
@@ -514,7 +523,7 @@ export function createFeishuClient(
             } else {
               elements.push({
                 tag: 'markdown',
-                content: `**${reasoningLabel}**：${reasoningText}`,
+                content: `**${reasoningLabel}**: ${reasoningText}`,
               })
             }
           }
@@ -534,13 +543,15 @@ export function createFeishuClient(
           if (subtaskLines.length > 0) {
             elements.push({
               tag: 'markdown',
-              content: `**子任务**\n${subtaskLines.join('\n')}`,
+              content: t('feishu.subtaskGroup', { lines: subtaskLines.join('\n') }),
             })
           }
 
           const runs = buildToolRunsFromParts(step.parts)
           for (const run of runs) {
-            const toolLabel = run.tool ? `工具输出：${run.tool}` : '工具输出'
+            const toolLabel = run.tool
+              ? `${t('feishu.toolOutputLabel')}: ${run.tool}`
+              : t('feishu.toolOutputLabel')
             elements.push({
               tag: 'collapsible_panel',
               expanded: false,
@@ -568,7 +579,9 @@ export function createFeishuClient(
       if (metaText && metaText.trim().length > 0) {
         const contextPercent = extractContextPercent(metaText)
         const footerContent = metaText.trim()
-        const metaTitle = contextPercent ? `上下文 ${contextPercent}` : '元信息'
+        const metaTitle = contextPercent
+          ? t('feishu.metaTitleWithContext', { value: contextPercent })
+          : t('feishu.metaTitle')
         const metaList = buildMetaList(footerContent)
         elements.push({
           tag: 'collapsible_panel',
@@ -587,7 +600,7 @@ export function createFeishuClient(
         const { thinkingContent, body: bodyWithoutThinking } = splitAssistantThinkingBlock(body)
         let { main, details } = splitAssistantDetails(bodyWithoutThinking)
         if ((!details || details.trim().length === 0) && toolRuns.length > 0) {
-          details = ASSISTANT_TOOL_OUTPUT_MARKER
+          details = getAssistantToolOutputMarker()
         }
         return {
           text: params.details || params.meta ? cleanedText : main,
@@ -602,7 +615,9 @@ export function createFeishuClient(
       const mainText = derived.text.trim()
 
       if (derived.thinkingContent !== undefined) {
-        const thinkingTitle = params.streaming ? '思考中' : '思考中（已完成）'
+        const thinkingTitle = params.streaming
+          ? t('feishu.thinkingTitleStreaming')
+          : t('feishu.thinkingTitleDone')
         elements.push({
           tag: 'collapsible_panel',
           expanded: false,
@@ -635,19 +650,22 @@ export function createFeishuClient(
           ? derived.toolRuns
           : parseAssistantToolRuns(derived.details)
         const trimmedDetails = derived.details.trim()
-        const isSubtaskOnly = trimmedDetails.startsWith('— 子任务 —')
-          && !trimmedDetails.startsWith('— 子任务/工具输出 —')
+        const subtaskMarker = getAssistantSubtaskMarker()
+        const toolMarker = getAssistantToolOutputMarker()
+        const isSubtaskOnly = trimmedDetails.startsWith(subtaskMarker)
+          && !trimmedDetails.startsWith(toolMarker)
 
         let handledDetails = false
         if (isSubtaskOnly) {
-          const subtaskBody = trimmedDetails.replace(/^— 子任务 —\s*/u, '').trim()
+          const markerRe = new RegExp(`^${subtaskMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'u')
+          const subtaskBody = trimmedDetails.replace(markerRe, '').trim()
           elements.push({
             tag: 'collapsible_panel',
             expanded: false,
             header: {
               title: {
                 tag: 'plain_text',
-                content: params.streaming ? '子任务（进行中）' : '子任务',
+                content: params.streaming ? t('feishu.stepInProgress') : t('labels.subtask'),
               },
             },
             elements: [
@@ -655,7 +673,7 @@ export function createFeishuClient(
                 tag: 'div',
                 text: {
                   tag: 'plain_text',
-                  content: subtaskBody || '进行中',
+                  content: subtaskBody || t('feishu.stepBodyInProgress'),
                 },
               },
             ],
@@ -670,7 +688,7 @@ export function createFeishuClient(
             header: {
               title: {
                 tag: 'plain_text',
-                content: '工具输出（进行中）',
+                content: t('feishu.toolOutputRunning'),
               },
             },
             elements: [
@@ -678,7 +696,7 @@ export function createFeishuClient(
                 tag: 'div',
                 text: {
                   tag: 'plain_text',
-                  content: '工具输出进行中',
+                  content: t('feishu.toolOutputRunningBody'),
                 },
               },
             ],
@@ -694,7 +712,7 @@ export function createFeishuClient(
               header: {
                 title: {
                   tag: 'plain_text',
-                  content: '工具输出',
+                  content: t('feishu.toolOutputLabel'),
                 },
               },
               elements: [{
@@ -712,7 +730,9 @@ export function createFeishuClient(
               header: {
                 title: {
                   tag: 'plain_text',
-                  content: runs.length > 0 ? `工具输出（${runs.length}）` : '工具输出',
+                  content: runs.length > 0
+                    ? t('feishu.toolOutputLabelWithCount', { count: runs.length })
+                    : t('feishu.toolOutputLabel'),
                 },
               },
               elements: buildToolElements(runs),
@@ -723,7 +743,9 @@ export function createFeishuClient(
 
       if (derived.meta && derived.meta.trim().length > 0) {
         const footerContent = derived.meta.trim()
-        const metaTitle = contextPercent ? `上下文 ${contextPercent}` : '元信息'
+        const metaTitle = contextPercent
+          ? t('feishu.metaTitleWithContext', { value: contextPercent })
+          : t('feishu.metaTitle')
         const metaList = buildMetaList(footerContent)
         const metaElements = [{
           tag: 'div',
@@ -759,7 +781,9 @@ export function createFeishuClient(
       header: {
         template,
         title: {
-          content: params.streaming ? `${title}（生成中）` : title,
+          content: params.streaming
+            ? t('feishu.cardTitleStreaming', { title })
+            : title,
           tag: 'plain_text',
         },
       },
@@ -784,7 +808,7 @@ export function createFeishuClient(
       header: {
         template: 'turquoise',
         title: {
-          content: '用户访问审批',
+          content: t('feishu.userApprovalTitle'),
           tag: 'plain_text',
         },
       },
@@ -793,7 +817,11 @@ export function createFeishuClient(
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**用户**: ${userName}\n**用户ID**: ${params.userId}\n**频道**: ${params.channelId}`,
+            content: t('feishu.userLabel', {
+              name: userName,
+              userId: params.userId,
+              channelId: params.channelId,
+            }),
           },
         },
         {
@@ -803,7 +831,7 @@ export function createFeishuClient(
               tag: 'button',
               text: {
                 tag: 'plain_text',
-                content: '同意',
+                content: t('feishu.approve'),
               },
               type: 'primary',
               value: {
@@ -815,7 +843,7 @@ export function createFeishuClient(
               tag: 'button',
               text: {
                 tag: 'plain_text',
-                content: '拒绝',
+                content: t('feishu.reject'),
               },
               type: 'danger',
               value: {
@@ -844,10 +872,15 @@ export function createFeishuClient(
       .map((opt) => (opt.description ? `- **${opt.label}**：${opt.description}` : `- **${opt.label}**`))
       .join('\n')
     const progressText = params.totalQuestions > 0
-      ? `\n\n_第 ${params.questionIndex + 1}/${params.totalQuestions} 题_`
+      ? t('feishu.questionProgress', {
+          index: params.questionIndex + 1,
+          total: params.totalQuestions,
+        })
       : ''
     const selectedText = params.selectedLabels && params.selectedLabels.length > 0
-      ? `\n\n**已选**：${params.selectedLabels.join('，')}`
+      ? t('feishu.questionSelected', {
+          labels: params.selectedLabels.join(', '),
+        })
       : ''
 
     if (params.completed) {
@@ -858,7 +891,7 @@ export function createFeishuClient(
         header: {
           template: 'green',
           title: {
-            content: params.title || '已提交',
+            content: params.title || t('feishu.submittedTitle'),
             tag: 'plain_text',
           },
         },
@@ -866,12 +899,12 @@ export function createFeishuClient(
           {
             tag: 'div',
             text: {
-              tag: 'lark_md',
-              content: `✅ 已提交问题回答${progressText}`,
-            },
+            tag: 'lark_md',
+            content: t('feishu.submittedBody', { progress: progressText }),
           },
-        ],
-      }
+        },
+      ],
+    }
     }
 
     const actions = params.options.map((opt) => ({
@@ -891,7 +924,7 @@ export function createFeishuClient(
     const isLast = params.questionIndex + 1 >= params.totalQuestions
     const nextButton: Record<string, unknown> = {
       tag: 'button',
-      text: { tag: 'plain_text', content: params.nextLabel || '下一步' },
+      text: { tag: 'plain_text', content: params.nextLabel || t('feishu.nextLabel') },
       value: {
         action: 'question-nav',
         question_id: params.questionId,
@@ -907,7 +940,7 @@ export function createFeishuClient(
       params.questionIndex > 0
         ? {
             tag: 'button',
-            text: { tag: 'plain_text', content: '上一步' },
+            text: { tag: 'plain_text', content: t('feishu.prevLabel') },
             value: {
               action: 'question-nav',
               question_id: params.questionId,
@@ -927,7 +960,7 @@ export function createFeishuClient(
       header: {
         template: 'blue',
         title: {
-          content: params.title || '请选择',
+          content: params.title || t('feishu.chooseTitle'),
           tag: 'plain_text',
         },
       },
@@ -960,12 +993,20 @@ export function createFeishuClient(
   }) => {
     const patternText = params.patterns.length > 0
       ? params.patterns.map((pattern) => `- \`${pattern}\``).join('\n')
-      : '_无匹配规则_'
+      : t('feishu.ruleNoMatch')
+    const rawReplyLabel = params.replyLabel || 'once'
+    const replyLabel = rawReplyLabel === 'always'
+      ? t('feishu.allowAlways')
+      : rawReplyLabel === 'once'
+        ? t('feishu.allowOnce')
+        : rawReplyLabel
     const statusLabel = params.status === 'approved'
-      ? `✅ 已允许（${params.replyLabel || 'once'}）`
+      ? (rawReplyLabel === 'always'
+        ? t('feishu.approvalAlways', { label: replyLabel })
+        : t('feishu.approvalOnce', { label: replyLabel }))
       : params.status === 'rejected'
-        ? '❌ 已拒绝'
-        : '⚠️ 需要权限确认'
+        ? t('feishu.approvalRejected')
+        : t('feishu.approvalPending')
 
     if (params.status && params.status !== 'pending') {
       const template = params.status === 'approved' ? 'green' : 'red'
@@ -977,7 +1018,7 @@ export function createFeishuClient(
         header: {
           template,
           title: {
-            content: '权限请求已处理',
+            content: t('feishu.approvalHandled'),
             tag: 'plain_text',
           },
         },
@@ -1001,7 +1042,7 @@ export function createFeishuClient(
       header: {
         template: 'orange',
         title: {
-          content: '权限请求',
+          content: t('feishu.approvalRequest'),
           tag: 'plain_text',
         },
       },
@@ -1018,7 +1059,7 @@ export function createFeishuClient(
           actions: [
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '仅本次允许' },
+              text: { tag: 'plain_text', content: t('feishu.allowOnce') },
               type: 'primary',
               value: {
                 action: 'permission',
@@ -1028,7 +1069,7 @@ export function createFeishuClient(
             },
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '始终允许' },
+              text: { tag: 'plain_text', content: t('feishu.allowAlways') },
               value: {
                 action: 'permission',
                 request_id: params.requestId,
@@ -1037,7 +1078,7 @@ export function createFeishuClient(
             },
             {
               tag: 'button',
-              text: { tag: 'plain_text', content: '拒绝' },
+              text: { tag: 'plain_text', content: t('feishu.deny') },
               type: 'danger',
               value: {
                 action: 'permission',
@@ -1792,7 +1833,9 @@ export function createFeishuClient(
       actionBy: string,
     ): Promise<boolean> {
       try {
-        const statusText = status === 'approved' ? '已同意' : '已拒绝'
+        const statusText = status === 'approved'
+          ? t('status.approved')
+          : t('status.rejected')
         const color = status === 'approved' ? 'green' : 'red'
 
         const cardContent = {
@@ -1803,7 +1846,7 @@ export function createFeishuClient(
           header: {
             template: color,
             title: {
-              content: '用户访问审批',
+              content: t('feishu.userApprovalTitle'),
               tag: 'plain_text',
             },
           },
@@ -1812,7 +1855,7 @@ export function createFeishuClient(
               tag: 'div',
               text: {
                 tag: 'lark_md',
-                content: `审批${statusText}，操作人: ${actionBy}`,
+                content: t('feishu.approvalStatus', { status: statusText, actionBy }),
               },
             },
           ],

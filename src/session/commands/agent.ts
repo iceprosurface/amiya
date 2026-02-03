@@ -5,6 +5,7 @@ import {
   setChannelAgent,
   setSessionAgent,
 } from "../../database.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import type { CommandHandler } from "./shared.js";
 
@@ -18,16 +19,19 @@ export const handleAgent: CommandHandler = async (message, command, options) => 
     await sendReply(
       provider,
       message,
-      `会话代理：${sessionAgent || "-"}\n频道代理：${channelAgent || "-"}`,
+      t("commands.agentStatus", {
+        sessionAgent: sessionAgent || "-",
+        channelAgent: channelAgent || "-",
+      }),
     );
     return true;
   }
   if (sessionId) {
     setSessionAgent(sessionId, arg);
-    await sendReply(provider, message, `✅ 会话代理已设置为 ${arg}`);
+    await sendReply(provider, message, t("commands.agentSessionSet", { agent: arg }));
   } else {
     setChannelAgent(message.channelId, arg);
-    await sendReply(provider, message, `✅ 频道代理已设置为 ${arg}`);
+    await sendReply(provider, message, t("commands.agentChannelSet", { agent: arg }));
   }
   return true;
 };

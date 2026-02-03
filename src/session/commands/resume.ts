@@ -1,4 +1,5 @@
 import { getThreadSession, setThreadSession } from "../../database.js";
+import { t } from "../../i18n/index.js";
 import { sendReply } from "../messaging.js";
 import type { CommandHandler } from "./shared.js";
 
@@ -7,10 +8,16 @@ export const handleResume: CommandHandler = async (message, command, options) =>
   const sessionId = command.args[0];
   if (!sessionId) {
     const current = getThreadSession(message.threadId);
-    await sendReply(provider, message, current ? `当前会话：${current}` : "未绑定会话。");
+    await sendReply(
+      provider,
+      message,
+      current
+        ? t("commands.resumeCurrent", { sessionId: current })
+        : t("commands.resumeNone"),
+    );
     return true;
   }
   setThreadSession(message.threadId, sessionId);
-  await sendReply(provider, message, `✅ 已将线程绑定到会话 ${sessionId}`);
+  await sendReply(provider, message, t("commands.resumeSet", { sessionId }));
   return true;
 };

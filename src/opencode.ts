@@ -11,6 +11,7 @@ import {
   ServerNotReadyError,
   ServerStartError,
 } from './errors.js'
+import { t } from './i18n/index.js'
 
 const opencodeServers = new Map<
   string,
@@ -36,7 +37,7 @@ async function getOpenPort(): Promise<number> {
           resolve(port)
         })
       } else {
-        reject(new Error('获取端口失败'))
+        reject(new Error(t('opencode.portFailed')))
       }
     })
     server.on('error', reject)
