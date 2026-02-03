@@ -935,7 +935,7 @@ export async function sendPrompt({
   let lastCompletedOcMessageId: string | null = null;
 
   const streamingConfig = streaming || {};
-  const stepCardMode = streamingConfig.stepCardMode ?? "same";
+  const stepCardMode = streamingConfig.stepCardMode ?? "new";
   streamingEnabled =
     streamingConfig.enabled === true &&
     provider.id === "feishu" &&
