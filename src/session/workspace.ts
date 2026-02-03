@@ -148,14 +148,15 @@ export async function handleWorkspaceAction(
       return true;
     }
 
-    if (!options.adminChatId || !options.adminUserIds || options.adminUserIds.length === 0) {
+    if (!options.adminUserIds || options.adminUserIds.length === 0) {
       await sendReply(options.provider, message, t("workspace.bindAdminMissing"));
       return true;
     }
 
+    const approvalChatId = options.adminChatId || message.channelId;
     const requestId = `wbind_${message.channelId}_${message.userId}_${Date.now()}`;
     const cardMessageId = await sendWorkspaceBindApprovalCard(options, {
-      adminChatId: options.adminChatId,
+      adminChatId: approvalChatId,
       requestId,
       channelId: message.channelId,
       workspaceName: rawName,
@@ -174,7 +175,7 @@ export async function handleWorkspaceAction(
       workspaceName: rawName,
       requesterUserId: message.userId,
       requesterUserName: message.userName,
-      adminChatId: options.adminChatId,
+      adminChatId: approvalChatId,
       cardMessageId,
     });
 
