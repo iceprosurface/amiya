@@ -857,6 +857,123 @@ export function createFeishuClient(
     }
   }
 
+  const buildWorkspaceBindCardContent = (params: { userId: string }) => {
+    return {
+      config: {
+        wide_screen_mode: true,
+        update_multi: true,
+      },
+      header: {
+        template: 'blue',
+        title: {
+          content: t('feishu.workspaceBindTitle'),
+          tag: 'plain_text',
+        },
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: t('feishu.workspaceBindBody', { userId: params.userId }),
+          },
+        },
+        {
+          tag: 'input',
+          name: 'workspace_name',
+          required: true,
+          placeholder: {
+            tag: 'plain_text',
+            content: t('feishu.workspaceNamePlaceholder'),
+          },
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: t('feishu.workspaceBindSubmit'),
+              },
+              type: 'primary',
+              form_action: true,
+              value: {
+                action: 'workspace-bind',
+              },
+            },
+          ],
+        },
+      ],
+    }
+  }
+
+  const buildWorkspaceJoinApprovalCardContent = (params: {
+    requestId: string
+    workspaceName: string
+    requesterUserId: string
+    requesterUserName?: string
+    ownerUserId: string
+  }) => {
+    const requester = params.requesterUserName || params.requesterUserId
+    return {
+      config: {
+        wide_screen_mode: true,
+        update_multi: true,
+      },
+      header: {
+        template: 'orange',
+        title: {
+          content: t('feishu.workspaceJoinTitle'),
+          tag: 'plain_text',
+        },
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: t('feishu.workspaceJoinBody', {
+              name: params.workspaceName,
+              userName: requester,
+              userId: params.requesterUserId,
+              ownerId: params.ownerUserId,
+            }),
+          },
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: t('feishu.workspaceJoinApprove'),
+              },
+              type: 'primary',
+              value: {
+                action: 'workspace-join-approve',
+                request_id: params.requestId,
+              },
+            },
+            {
+              tag: 'button',
+              text: {
+                tag: 'plain_text',
+                content: t('feishu.workspaceJoinReject'),
+              },
+              type: 'danger',
+              value: {
+                action: 'workspace-join-reject',
+                request_id: params.requestId,
+              },
+            },
+          ],
+        },
+      ],
+    }
+  }
+
   const buildQuestionCardContent = (params: {
     title: string
     questionId: string
@@ -1872,6 +1989,120 @@ export function createFeishuClient(
         return true
       } catch (error) {
         log(`Update approval card failed: ${error}`, 'error')
+        return false
+      }
+    },
+    async replyWorkspaceBindCardWithId(
+      messageId: string,
+      params: { userId: string },
+      options?: { replyInThread?: boolean },
+    ): Promise<string | null> {
+      try {
+        const cardContent = buildWorkspaceBindCardContent(params)
+        const replyParams: Parameters<typeof client.im.message.reply>[0] = {
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        }
+
+        if (options?.replyInThread) {
+          ;(replyParams.data as Record<string, unknown>).reply_in_thread = true
+        }
+
+        const result: unknown = await client.im.message.reply(replyParams)
+        const replyId = extractMessageId(result)
+        if (!replyId) {
+          log(`Workspace bind card reply to ${messageId} but missing message_id`, 'warn')
+        }
+        return replyId
+      } catch (error) {
+        log(`Reply workspace bind card failed: ${error}`, 'error')
+        return null
+      }
+    },
+    async replyWorkspaceJoinApprovalCardWithId(
+      messageId: string,
+      params: {
+        requestId: string
+        workspaceName: string
+        requesterUserId: string
+        requesterUserName?: string
+        ownerUserId: string
+      },
+      options?: { replyInThread?: boolean },
+    ): Promise<string | null> {
+      try {
+        const cardContent = buildWorkspaceJoinApprovalCardContent(params)
+        const replyParams: Parameters<typeof client.im.message.reply>[0] = {
+          path: { message_id: messageId },
+          data: {
+            msg_type: 'interactive',
+            content: JSON.stringify(cardContent),
+          },
+        }
+
+        if (options?.replyInThread) {
+          ;(replyParams.data as Record<string, unknown>).reply_in_thread = true
+        }
+
+        const result: unknown = await client.im.message.reply(replyParams)
+        const replyId = extractMessageId(result)
+        if (!replyId) {
+          log(`Workspace join card reply to ${messageId} but missing message_id`, 'warn')
+        }
+        return replyId
+      } catch (error) {
+        log(`Reply workspace join card failed: ${error}`, 'error')
+        return null
+      }
+    },
+    async updateWorkspaceJoinApprovalCard(
+      messageId: string,
+      status: 'approved' | 'rejected',
+      actionBy: string,
+    ): Promise<boolean> {
+      try {
+        const statusText = status === 'approved'
+          ? t('status.approved')
+          : t('status.rejected')
+        const color = status === 'approved' ? 'green' : 'red'
+
+        const cardContent = {
+          config: {
+            wide_screen_mode: true,
+            update_multi: true,
+          },
+          header: {
+            template: color,
+            title: {
+              content: t('feishu.workspaceJoinTitle'),
+              tag: 'plain_text',
+            },
+          },
+          elements: [
+            {
+              tag: 'div',
+              text: {
+                tag: 'lark_md',
+                content: t('feishu.workspaceJoinStatus', { status: statusText, actionBy }),
+              },
+            },
+          ],
+        }
+
+        await client.im.message.patch({
+          path: { message_id: messageId },
+          data: {
+            content: JSON.stringify(cardContent),
+          },
+        })
+
+        log(`Workspace join card ${messageId} updated to ${statusText}`, 'debug')
+        return true
+      } catch (error) {
+        log(`Update workspace join card failed: ${error}`, 'error')
         return false
       }
     },

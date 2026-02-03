@@ -46,3 +46,8 @@ export type PendingPermission = {
 };
 
 export const pendingPermissions = new Map<string, PendingPermission>();
+
+export const pendingWorkspaceBinds = new Map<
+  string,
+  { messageId?: string; sentAt: number }
+>();

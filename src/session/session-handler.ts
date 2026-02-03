@@ -24,6 +24,7 @@ import {
   pendingQuestions,
 } from "./state.js";
 import type { PendingQuestion } from "./state.js";
+import { ensureWorkspaceBound, handleWorkspaceAction } from "./workspace.js";
 import { buildFailureReport, describeError, logWith, toUserErrorMessage } from "./utils.js";
 
 export type SessionHandlerOptions = {
@@ -81,6 +82,11 @@ export type SessionHandlerOptions = {
     requestId: string;
     reply: "once" | "always" | "reject";
   };
+  workspaceAction?: {
+    action: "bind" | "join-approve" | "join-reject";
+    workspaceName?: string;
+    requestId?: string;
+  };
   botUserId?: string;
 };
 
@@ -88,13 +94,28 @@ export async function handleIncomingMessage(
   message: IncomingMessage,
   options: SessionHandlerOptions,
 ): Promise<void> {
-  if (options.isCardAction && !options.questionResponse && !options.questionNav && !options.permissionResponse) {
+  if (
+    options.isCardAction
+    && !options.questionResponse
+    && !options.questionNav
+    && !options.permissionResponse
+    && !options.workspaceAction
+  ) {
     await handleCardAction(message, options);
+    return;
+  }
+
+  if (options.workspaceAction) {
+    await handleWorkspaceAction(message, options, options.workspaceAction);
     return;
   }
 
   if (options.requireUserWhitelist && !isUserInWhitelist(message.channelId, message.userId)) {
     await handleUserNotWhitelisted(message, options);
+    return;
+  }
+
+  if (await ensureWorkspaceBound(message, options)) {
     return;
   }
 

@@ -118,6 +118,7 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
       questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
       permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
+      workspaceAction?: { action: 'bind' | 'join-approve' | 'join-reject'; workspaceName?: string; requestId?: string }
     },
   ) => void | Promise<void>) | null = null
 
@@ -246,6 +247,40 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       return
     }
 
+    if (cardAction.action === 'workspace-bind') {
+      if (!cardAction.workspaceName) {
+        log(`Workspace bind action missing name: ${JSON.stringify(cardAction)}`, 'warn')
+        return
+      }
+      void Promise.resolve(messageHandler(incomingMessage, {
+        isCardAction: true,
+        workspaceAction: {
+          action: 'bind',
+          workspaceName: cardAction.workspaceName,
+        },
+      })).catch((error) => {
+        log(`Card action handler failed: ${error}`, 'error')
+      })
+      return
+    }
+
+    if (cardAction.action === 'workspace-join-approve' || cardAction.action === 'workspace-join-reject') {
+      if (!cardAction.requestId) {
+        log(`Workspace join action missing requestId: ${JSON.stringify(cardAction)}`, 'warn')
+        return
+      }
+      void Promise.resolve(messageHandler(incomingMessage, {
+        isCardAction: true,
+        workspaceAction: {
+          action: cardAction.action === 'workspace-join-approve' ? 'join-approve' : 'join-reject',
+          requestId: cardAction.requestId,
+        },
+      })).catch((error) => {
+        log(`Card action handler failed: ${error}`, 'error')
+      })
+      return
+    }
+
     void Promise.resolve(messageHandler(incomingMessage, {
       isCardAction: true,
       cardActionData: {
@@ -273,6 +308,9 @@ export function createFeishuProvider(options: FeishuProviderOptions): MessagePro
       isCardAction: boolean
       cardActionData?: { action: 'approve' | 'reject'; requestId: string }
       questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
+      questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
+      permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
+      workspaceAction?: { action: 'bind' | 'join-approve' | 'join-reject'; workspaceName?: string; requestId?: string }
     },
   ) => void | Promise<void>): void {
     messageHandler = handler
