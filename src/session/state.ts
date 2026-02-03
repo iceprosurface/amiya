@@ -12,10 +12,14 @@ export const activeRequests = new Map<
   { sessionId: string; controller: AbortController }
 >();
 
-export const activeStreams = new Map<
-  string,
-  { placeholderId: string; cardId?: string; elementId?: string }
->();
+export type ActiveStreamState = {
+  placeholderId?: string;
+  cardId?: string;
+  elementId?: string;
+  byOcMessageId?: Map<string, { messageId: string; cardId?: string; elementId?: string }>;
+};
+
+export const activeStreams = new Map<string, ActiveStreamState>();
 
 export type PendingQuestion = {
   requestId: string;

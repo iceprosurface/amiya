@@ -31,11 +31,26 @@ export const handleAbort: CommandHandler = async (message, _command, options) =>
   }
   const streamState = activeStreams.get(message.threadId);
   if (streamState && provider.updateMessage) {
-    await provider.updateMessage(streamState.placeholderId, {
-      text: t("commands.abortStatus"),
-      cardId: streamState.cardId,
-      elementId: streamState.elementId,
-    });
+    const updates: Array<Promise<boolean>> = [];
+    if (streamState.byOcMessageId && streamState.byOcMessageId.size > 0) {
+      for (const entry of streamState.byOcMessageId.values()) {
+        updates.push(provider.updateMessage(entry.messageId, {
+          text: t("commands.abortStatus"),
+          cardId: entry.cardId,
+          elementId: entry.elementId,
+        }));
+      }
+    } else if (streamState.placeholderId) {
+      const placeholderId = streamState.placeholderId;
+      updates.push(provider.updateMessage(placeholderId, {
+        text: t("commands.abortStatus"),
+        cardId: streamState.cardId,
+        elementId: streamState.elementId,
+      }));
+    }
+    if (updates.length > 0) {
+      await Promise.allSettled(updates);
+    }
     activeStreams.delete(message.threadId);
   }
   await sendReply(provider, message, t("commands.abortDone"));

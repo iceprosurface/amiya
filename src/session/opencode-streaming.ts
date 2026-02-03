@@ -9,7 +9,7 @@ export interface StreamingControllerOptions {
   threadId: string
   abortSignal: AbortSignal
   startedAt: number
-  onTextUpdate?: (text: string, isComplete: boolean) => Promise<void>
+  onTextUpdate?: (messageId: string, text: string, isComplete: boolean) => Promise<void>
   onQuestionAsked?: (questionRequest: {
     id?: string
     sessionID?: string
@@ -21,7 +21,6 @@ export interface StreamingControllerOptions {
     permission?: string
     patterns?: string[]
   }) => Promise<void>
-  onAssistantMessageSwitch?: () => Promise<void>
   logger?: (message: string, level?: "debug" | "info" | "warn" | "error") => void
 }
 
@@ -105,15 +104,15 @@ export async function createStreamingController(
     string,
     { order: string[]; parts: Map<string, Record<string, unknown>> }
   >()
-  let assistantMessageId: string | null = null
-  let textCache = ""
-  let renderedPayload = ""
+  const acceptedAssistantMessageIds = new Set<string>()
+  const textCacheByMessageId = new Map<string, string>()
+  const renderedPayloadByMessageId = new Map<string, string>()
   let started = false
 
-  const handleTextUpdate = async (text: string, isComplete: boolean) => {
+  const handleTextUpdate = async (messageId: string, text: string, isComplete: boolean) => {
     if (!options.onTextUpdate) return
     try {
-      await options.onTextUpdate(text, isComplete)
+      await options.onTextUpdate(messageId, text, isComplete)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       logWith(options.logger, `Streaming onTextUpdate failed: ${message}`, "debug")
@@ -128,10 +127,9 @@ export async function createStreamingController(
     return bucket
   }
 
-  const updateTextCache = async () => {
+  const updateTextCache = async (messageId: string) => {
     if (!options.onTextUpdate) return
-    if (!assistantMessageId) return
-    const bucket = messageParts.get(assistantMessageId)
+    const bucket = messageParts.get(messageId)
     if (!bucket) return
     const orderedParts = bucket.order
       .map((id) => bucket.parts.get(id))
@@ -139,18 +137,25 @@ export async function createStreamingController(
     const nextText = extractTextFromPromptResult({ data: { parts: orderedParts } })
     const xml = buildAmiyaXmlFromParts(orderedParts)
     const combined = xml ? `${nextText}\n\n${xml}` : nextText
-    if (combined === renderedPayload) return
-    renderedPayload = combined
-    if (nextText !== textCache) {
-      textCache = nextText
+    const previousRendered = renderedPayloadByMessageId.get(messageId)
+    if (combined === previousRendered) return
+    renderedPayloadByMessageId.set(messageId, combined)
+    const previousText = textCacheByMessageId.get(messageId)
+    if (nextText !== previousText) {
+      textCacheByMessageId.set(messageId, nextText)
       upsertMessageRenderCache({
         sessionId: options.sessionId,
-        messageId: assistantMessageId,
-        renderedText: textCache,
+        messageId,
+        renderedText: nextText,
       })
     }
-    await handleTextUpdate(renderedPayload, false)
+    await handleTextUpdate(messageId, combined, false)
   }
+
+  const getRenderedPayload = (messageId: string) =>
+    renderedPayloadByMessageId.get(messageId)
+    ?? textCacheByMessageId.get(messageId)
+    ?? ""
 
   const persistMessagePart = (
     part: Record<string, unknown>,
@@ -265,46 +270,24 @@ export async function createStreamingController(
         })
       }
 
-      if (info.role === "assistant") {
-        const createdAt = info.time?.created
-        if (!assistantMessageId) {
-          if (shouldAcceptAssistant(createdAt)) {
-            assistantMessageId = info.id || null
+        if (info.role === "assistant" && info.id) {
+          const createdAt = info.time?.created
+          if (!shouldAcceptAssistant(createdAt)) return
+          if (!acceptedAssistantMessageIds.has(info.id)) {
+            acceptedAssistantMessageIds.add(info.id)
             logWith(
               options.logger,
-              `Stream assistant message selected id=${assistantMessageId || "-"} created=${createdAt ?? "-"}`,
+              `Stream assistant message accepted id=${info.id} created=${createdAt ?? "-"}`,
               "debug",
             )
-            await updateTextCache()
-          } else {
-            return
           }
-        } else if (assistantMessageId && info.id && info.id !== assistantMessageId && shouldAcceptAssistant(createdAt)) {
-          logWith(
-            options.logger,
-            `Stream assistant message switched from ${assistantMessageId} to ${info.id}`,
-            "debug",
-          )
-          assistantMessageId = info.id
-          textCache = ""
-          renderedPayload = ""
-          messageParts.clear()
-          if (options.onAssistantMessageSwitch) {
-            try {
-              await options.onAssistantMessageSwitch()
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
-              logWith(options.logger, `Stream message switch callback failed: ${message}`, "debug")
-            }
+          await updateTextCache(info.id)
+          if (info.time?.completed) {
+            await handleTextUpdate(info.id, getRenderedPayload(info.id), true)
           }
-          await updateTextCache()
         }
-        if (assistantMessageId && info.id === assistantMessageId && info.time?.completed) {
-          await handleTextUpdate(renderedPayload || textCache, true)
-        }
+        return
       }
-      return
-    }
 
     if (isMessagePartUpdatedEvent(event)) {
       const part = event.properties?.part
@@ -328,9 +311,6 @@ export async function createStreamingController(
         return
       }
 
-      if (assistantMessageId && messageId !== assistantMessageId) {
-        return
-      }
 
       const bucket = getMessageBucket(messageId)
       const existing = bucket.parts.get(partId)
@@ -362,8 +342,8 @@ export async function createStreamingController(
         persistToolRunFromPart(nextPart, messageId, partId)
       }
 
-      if (assistantMessageId && messageId === assistantMessageId) {
-        await updateTextCache()
+      if (acceptedAssistantMessageIds.has(messageId)) {
+        await updateTextCache(messageId)
       }
     }
 
