@@ -921,7 +921,7 @@ export async function sendPrompt({
     let statusPoller: { start: () => void; stop: () => void } | null = null;
     let modelParam: { providerID: string; modelID: string } | null = null;
     let promptStartedAt = Date.now();
-    let buildFooterFromSession: () => Promise<string | null> = async () => null;
+    let buildFooterFromSession: (messageId?: string) => Promise<string | null> = async () => null;
   type StreamSinkEntry = {
     sink: ReturnType<typeof createFeishuStreamSink>;
     placeholder: { messageId: string; cardId?: string; elementId?: string };
@@ -986,9 +986,19 @@ export async function sendPrompt({
     state.elementId = entry.placeholder.elementId;
   };
 
+  const createNewStreamSinkEntryForMessage = async (ocMessageId: string) => {
+    const entry = await createStreamSinkEntry();
+    streamSinks.set(ocMessageId, entry);
+    bindStreamSinkEntry(ocMessageId, entry);
+    return entry;
+  };
+
   const getOrCreateStreamSinkEntry = async (ocMessageId: string) => {
     const existing = streamSinks.get(ocMessageId);
-    if (existing) return existing;
+    if (existing && !existing.finalized) return existing;
+    if (existing && existing.finalized) {
+      return await createNewStreamSinkEntryForMessage(ocMessageId);
+    }
     const pending = streamSinkInitPromises.get(ocMessageId);
     if (pending) return await pending;
     const initPromise = (async () => {
@@ -1063,10 +1073,25 @@ export async function sendPrompt({
       if (reason === "idle") {
         idleSeen = true;
       }
-      if (pendingReplyFooter === null && reason === "idle") {
+      const hasRenderableText = Boolean(
+        lastUpdatedOcMessageId
+        || lastCompletedOcMessageId
+        || Array.from(streamSinks.values()).some((entry) => Boolean(entry.lastText && entry.lastText.trim()))
+        || (unboundStreamSink?.lastText && unboundStreamSink.lastText.trim().length > 0),
+      );
+      if (!hasRenderableText) {
+        if (reason === "complete") {
+          completeSeen = true;
+        }
+        return;
+      }
+      if (pendingReplyText === null) {
+        pendingReplyText = "";
+      }
+      if (pendingReplyFooter === null) {
         pendingReplyFooter = await buildFooterFromSession();
       }
-      if (pendingReplyText === null || pendingReplyFooter === null) {
+      if (pendingReplyFooter === null) {
         if (reason === "complete") {
           completeSeen = true;
         }
@@ -1178,7 +1203,7 @@ export async function sendPrompt({
 
     const parts = [{ type: "text" as const, text: message.text }];
     promptStartedAt = Date.now();
-    buildFooterFromSession = async () => {
+    buildFooterFromSession = async (messageId?: string) => {
       if (!modelParam) return null;
       try {
         const messagesResp = await getClient().session.messages({
@@ -1191,6 +1216,7 @@ export async function sendPrompt({
           if (!isRecord(item)) continue;
           const info = item.info;
           if (!isRecord(info) || info.role !== "assistant") continue;
+          if (messageId && info.id !== messageId) continue;
           const footer = await buildFooter({ data: { info } }, {
             sessionId,
             model: modelParam,
@@ -1204,7 +1230,23 @@ export async function sendPrompt({
         const message = error instanceof Error ? error.message : String(error);
         logWith(logger, `Session footer lookup failed: ${message}`, "debug");
       }
-      return null;
+      return await buildFooter({ data: { info: {} } }, {
+        sessionId,
+        model: modelParam,
+        directory,
+        startedAt: promptStartedAt,
+        getClient,
+      });
+    };
+
+    const finalizeStreamSinkEntry = async (messageId: string) => {
+      const entry = streamSinks.get(messageId);
+      if (!entry || entry.finalized) return;
+      if (!entry.lastText || entry.lastText.trim().length === 0) return;
+      const footer = await buildFooterFromSession(messageId);
+      if (!footer) return;
+      await entry.sink.finalize(entry.lastText, footer);
+      entry.finalized = true;
     };
 
     try {
@@ -1225,6 +1267,10 @@ export async function sendPrompt({
         startedAt: promptStartedAt,
         onTextUpdate: streamingEnabled
           ? async (messageId, text, isComplete) => {
+            const existing = streamSinks.get(messageId);
+            if (existing?.finalized && existing.lastText === text) {
+              return;
+            }
             const entry = await getOrCreateStreamSinkEntry(messageId);
             entry.lastText = text;
             await entry.sink.render(text);
@@ -1232,7 +1278,14 @@ export async function sendPrompt({
             if (isComplete) {
               lastCompletedOcMessageId = messageId;
               await finalizeStreamingIfReady("complete");
+            } else if (idleSeen) {
+              await finalizeStreamingIfReady("idle");
             }
+          }
+          : undefined,
+        onStepFinish: streamingEnabled
+          ? async (messageId) => {
+            await finalizeStreamSinkEntry(messageId);
           }
           : undefined,
         onQuestionAsked: async (questionRequest) => {

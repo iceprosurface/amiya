@@ -10,6 +10,7 @@ export interface StreamingControllerOptions {
   abortSignal: AbortSignal
   startedAt: number
   onTextUpdate?: (messageId: string, text: string, isComplete: boolean) => Promise<void>
+  onStepFinish?: (messageId: string) => Promise<void>
   onQuestionAsked?: (questionRequest: {
     id?: string
     sessionID?: string
@@ -344,6 +345,14 @@ export async function createStreamingController(
 
       if (acceptedAssistantMessageIds.has(messageId)) {
         await updateTextCache(messageId)
+        if (part.type === "step-finish" && options.onStepFinish) {
+          try {
+            await options.onStepFinish(messageId)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            logWith(options.logger, `Streaming onStepFinish failed: ${message}`, "debug")
+          }
+        }
       }
     }
 
