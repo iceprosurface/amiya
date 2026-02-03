@@ -14,6 +14,7 @@ import { handleNewSession } from "./new-session.js";
 import { handleProject } from "./project.js";
 import { handleQueue } from "./queue.js";
 import { handleResume } from "./resume.js";
+import { handleWorkspace, handleWorkspaces } from "./workspace.js";
 import type { Command, CommandHandler } from "./shared.js";
 import { handleUpdateDeploy } from "./update-deploy.js";
 
@@ -32,6 +33,8 @@ const handlers: Record<string, CommandHandler> = {
   agent: handleAgent,
   compact: handleCompact,
   "mention-required": handleMentionRequired,
+  workspace: handleWorkspace,
+  workspaces: handleWorkspaces,
   update: handleUpdateDeploy,
   deploy: handleUpdateDeploy,
   help: handleHelp,

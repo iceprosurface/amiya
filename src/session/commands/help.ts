@@ -24,6 +24,8 @@ export const handleHelp: CommandHandler = async (message, _command, options) => 
     t("help.projectView"),
     t("help.projectSet"),
     t("help.dirAlias"),
+    t("help.workspace"),
+    t("help.workspaces"),
     "",
     t("help.runtime"),
     t("help.mentionRequired"),

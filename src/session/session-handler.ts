@@ -115,6 +115,26 @@ export async function handleIncomingMessage(
     return;
   }
 
+  const command = parseCommand(message.text);
+  if (command) {
+    const allowedWithoutWorkspace = new Set([
+      "help",
+      "model",
+      "agent",
+      "channel-model",
+      "mention-required",
+      "compact",
+      "workspace",
+      "workspaces",
+    ]);
+    if (allowedWithoutWorkspace.has(command.name)) {
+      const handled = await handleCommand(message, command, options);
+      if (handled) {
+        return;
+      }
+    }
+  }
+
   if (await ensureWorkspaceBound(message, options)) {
     return;
   }
@@ -305,7 +325,7 @@ export async function handleIncomingMessage(
     return;
   }
 
-  const command = parseCommand(message.text);
+  const commandAfterBinding = command ?? parseCommand(message.text);
   if (command && command.name === "mention-required") {
     const handled = await handleCommand(message, command, options);
     if (handled) {
@@ -324,8 +344,8 @@ export async function handleIncomingMessage(
     return;
   }
 
-  if (command) {
-    const handled = await handleCommand(message, command, options);
+  if (commandAfterBinding) {
+    const handled = await handleCommand(message, commandAfterBinding, options);
     if (handled) {
       return;
     }

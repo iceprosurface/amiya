@@ -859,6 +859,7 @@ export function createFeishuClient(
 
   const buildWorkspaceBindCardContent = (params: { userId: string }) => {
     return {
+      schema: '2.0',
       config: {
         wide_screen_mode: true,
         update_multi: true,
@@ -870,41 +871,45 @@ export function createFeishuClient(
           tag: 'plain_text',
         },
       },
-      elements: [
-        {
-          tag: 'div',
-          text: {
-            tag: 'lark_md',
-            content: t('feishu.workspaceBindBody', { userId: params.userId }),
-          },
-        },
-        {
-          tag: 'input',
-          name: 'workspace_name',
-          required: true,
-          placeholder: {
-            tag: 'plain_text',
-            content: t('feishu.workspaceNamePlaceholder'),
-          },
-        },
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: {
-                tag: 'plain_text',
-                content: t('feishu.workspaceBindSubmit'),
-              },
-              type: 'primary',
-              form_action: true,
-              value: {
-                action: 'workspace-bind',
-              },
+      body: {
+        elements: [
+          {
+            tag: 'div',
+            text: {
+              tag: 'lark_md',
+              content: t('feishu.workspaceBindBody', { userId: params.userId }),
             },
-          ],
-        },
-      ],
+          },
+          {
+            tag: 'form',
+            name: 'workspace_bind',
+            elements: [
+              {
+                tag: 'input',
+                name: 'workspace_name',
+                required: true,
+                placeholder: {
+                  tag: 'plain_text',
+                  content: t('feishu.workspaceNamePlaceholder'),
+                },
+              },
+              {
+                tag: 'button',
+                name: 'workspace_bind_submit',
+                text: {
+                  tag: 'plain_text',
+                  content: t('feishu.workspaceBindSubmit'),
+                },
+                type: 'primary',
+                action_type: 'form_submit',
+                value: {
+                  action: 'workspace-bind',
+                },
+              },
+            ],
+          },
+        ],
+      },
     }
   }
 

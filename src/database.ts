@@ -416,6 +416,13 @@ export function createWorkspace(workspaceName: string, ownerUserId: string): voi
     .run(workspaceName, ownerUserId)
 }
 
+export function listWorkspaces(): Array<{ name: string; ownerUserId: string }> {
+  const rows = getDatabase()
+    .prepare('SELECT workspace_name, owner_user_id FROM workspaces ORDER BY workspace_name')
+    .all() as Array<{ workspace_name: string; owner_user_id: string }>
+  return rows.map((row) => ({ name: row.workspace_name, ownerUserId: row.owner_user_id }))
+}
+
 export function isWorkspaceMember(workspaceName: string, userId: string): boolean {
   const row = getDatabase()
     .prepare('SELECT 1 FROM workspace_members WHERE workspace_name = ? AND user_id = ?')

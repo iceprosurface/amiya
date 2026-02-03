@@ -130,8 +130,10 @@ export function createFeishuEventClient(
     const section = actionValue?.section as 'details' | 'meta' | undefined
     const expanded = typeof actionValue?.expanded === 'boolean' ? actionValue.expanded : undefined
     const formValue = (action as Record<string, unknown>)?.form as Record<string, unknown> | undefined
+    const formValueV2 = (action as Record<string, unknown>)?.form_value as Record<string, unknown> | undefined
     const workspaceName =
       readString(formValue?.workspace_name)
+      ?? readString(formValueV2?.workspace_name)
       ?? readString(actionValue?.workspace_name)
 
     if (!cardAction) {
