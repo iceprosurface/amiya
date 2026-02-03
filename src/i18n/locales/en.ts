@@ -68,6 +68,7 @@ export const en = {
       nameInvalid: "❌ Workspace name allows only letters and '-'.",
       boundCreated: "✅ Workspace created and bound: {{name}}",
       boundSwitched: "✅ Switched to workspace: {{name}}",
+      joinAuto: "✅ Joined workspace: {{name}}",
       joinSubmitted: "✅ Join request submitted for {{name}} (waiting for {{ownerId}}).",
       joinRequestFailed: "❌ Failed to send join request. Contact the workspace owner.",
       joinRequestMissing: "❌ Join request not found or expired.",

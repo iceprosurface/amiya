@@ -4,10 +4,12 @@ import path from "node:path";
 
 let dataDir: string | null = null;
 let workspaceBaseDir: string | null = null;
+let workspaceJoinRequiresApproval: boolean | null = null;
 
 export type RuntimeConfig = {
   locale?: string;
   workspaceDir?: string;
+  workspaceJoinRequiresApproval?: boolean;
 };
 
 type RuntimeLogger = (message: string, level?: "debug" | "info" | "warn" | "error") => void;
@@ -51,6 +53,14 @@ export function setWorkspaceBaseDir(dir: string): void {
   workspaceBaseDir = resolved;
 }
 
+export function getWorkspaceJoinRequiresApproval(): boolean {
+  return workspaceJoinRequiresApproval ?? true;
+}
+
+export function setWorkspaceJoinRequiresApproval(value: boolean): void {
+  workspaceJoinRequiresApproval = value;
+}
+
 export function loadRuntimeConfig(logger?: RuntimeLogger): RuntimeConfig {
   const configPath = path.join(getDataDir(), "config.json");
   if (!fs.existsSync(configPath)) return {};
@@ -61,7 +71,11 @@ export function loadRuntimeConfig(logger?: RuntimeLogger): RuntimeConfig {
     const record = parsed as Record<string, unknown>;
     const locale = typeof record.locale === "string" ? record.locale : undefined;
     const workspaceDir = typeof record.workspaceDir === "string" ? record.workspaceDir : undefined;
-    return { locale, workspaceDir };
+    const workspaceJoinRequiresApproval =
+      typeof record.workspaceJoinRequiresApproval === "boolean"
+        ? record.workspaceJoinRequiresApproval
+        : undefined;
+    return { locale, workspaceDir, workspaceJoinRequiresApproval };
   } catch (error) {
     logger?.(`Failed to read ${configPath}: ${error}`, "warn");
     return {};

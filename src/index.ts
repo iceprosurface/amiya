@@ -2,7 +2,12 @@ import type { Logger } from "winston";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { loadRuntimeConfig, setDataDir, setWorkspaceBaseDir } from "./config.js";
+import {
+  loadRuntimeConfig,
+  setDataDir,
+  setWorkspaceBaseDir,
+  setWorkspaceJoinRequiresApproval,
+} from "./config.js";
 import { initI18n, t } from "./i18n/index.js";
 import { defaultLogger, setupLogger } from "./logger/index.js";
 import {
@@ -26,6 +31,9 @@ export async function startAmiya(targetDir: string) {
   initI18n(runtimeConfig.locale);
   if (runtimeConfig.workspaceDir) {
     setWorkspaceBaseDir(runtimeConfig.workspaceDir);
+  }
+  if (typeof runtimeConfig.workspaceJoinRequiresApproval === "boolean") {
+    setWorkspaceJoinRequiresApproval(runtimeConfig.workspaceJoinRequiresApproval);
   }
 
   const loaded = loadFeishuConfig(targetDir, logger);

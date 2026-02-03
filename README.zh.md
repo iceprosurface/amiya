@@ -10,6 +10,7 @@
 - ✅ 会话级 model/agent 偏好
 - ✅ 命令路由：/new-session /resume /abort /queue /list-sessions /model /agent /project /compact /help
 - ✅ Lark 国际版支持（useLark）
+- ✅ 工作区绑定，支持配置基准目录
 
 > Slack 目前只有骨架，暂不可用。
 
@@ -112,6 +113,18 @@ pnpm start -- /path/to/your/project
 - `amiya.sqlite3`：会话/偏好数据
 - `amiya.lock`：单实例锁
 - `source.md`：agent 核心提示词（可由 agent 自行维护）
+
+运行时配置（`.amiya/config.json`）：
+
+```json
+{
+  "workspaceDir": "~/.amiya-project",
+  "workspaceJoinRequiresApproval": true
+}
+```
+
+- `workspaceDir` 用于设置工作区目录基准路径。
+- `workspaceJoinRequiresApproval` 控制是否需要审批（设为 false 则自动加入）。
 
 > 依赖：本地需要可执行 `opencode` 命令；可通过 `OPENCODE_PATH` 指定路径。
 

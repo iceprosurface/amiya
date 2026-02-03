@@ -12,6 +12,7 @@ English | [中文](README.zh.md)
 - ✅ Session-level model/agent preferences
 - ✅ Command routing: /new-session /resume /abort /queue /list-sessions /model /agent /project /compact /help
 - ✅ Lark (international Feishu) support via `useLark`
+- ✅ Workspace binding with configurable base directory
 
 > Slack is only a skeleton for now and is not usable.
 
@@ -114,6 +115,18 @@ On startup, the target project directory will contain `.amiya/`:
 - `amiya.sqlite3`: session/preferences data
 - `amiya.lock`: single instance lock
 - `source.md`: agent prompt (maintained by the agent)
+
+Runtime config (`.amiya/config.json`):
+
+```json
+{
+  "workspaceDir": "~/.amiya-project",
+  "workspaceJoinRequiresApproval": true
+}
+```
+
+- `workspaceDir` sets the base directory for workspace folders.
+- `workspaceJoinRequiresApproval` toggles join approval (false to auto-join).
 
 > Requires an executable `opencode` command; you can set `OPENCODE_PATH` to override.
 
