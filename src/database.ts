@@ -23,9 +23,17 @@ export function getDatabase(): Database.Database {
       CREATE TABLE IF NOT EXISTS thread_sessions (
         thread_id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
+        user_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+    const threadSessionColumns = db
+      .prepare('PRAGMA table_info(thread_sessions)')
+      .all() as Array<{ name: string }>
+    const hasThreadSessionUser = threadSessionColumns.some((column) => column.name === 'user_id')
+    if (!hasThreadSessionUser) {
+      db.exec('ALTER TABLE thread_sessions ADD COLUMN user_id TEXT')
+    }
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS channel_directories (
@@ -205,10 +213,17 @@ export function getThreadSession(threadId: string): string | undefined {
   return row?.session_id
 }
 
-export function setThreadSession(threadId: string, sessionId: string): void {
+export function getThreadSessionUser(threadId: string): string | undefined {
+  const row = getDatabase()
+    .prepare('SELECT user_id FROM thread_sessions WHERE thread_id = ?')
+    .get(threadId) as { user_id: string | null } | undefined
+  return row?.user_id ?? undefined
+}
+
+export function setThreadSession(threadId: string, sessionId: string, userId?: string): void {
   getDatabase()
-    .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id) VALUES (?, ?)')
-    .run(threadId, sessionId)
+    .prepare('INSERT OR REPLACE INTO thread_sessions (thread_id, session_id, user_id) VALUES (?, ?, ?)')
+    .run(threadId, sessionId, userId ?? null)
 }
 
 export function clearThreadSession(threadId: string): void {
