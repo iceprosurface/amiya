@@ -19,6 +19,7 @@ export interface StreamingConfig {
   throttleMs?: number
   maxMessageChars?: number
   timeoutGraceMs?: number
+  stepCardMode?: 'same' | 'new'
 }
 
 export function validateConfig(config: unknown): config is FeishuConfig {
@@ -40,6 +41,11 @@ export function validateConfig(config: unknown): config is FeishuConfig {
     if (typeof s.throttleMs !== 'undefined' && typeof s.throttleMs !== 'number') return false
     if (typeof s.maxMessageChars !== 'undefined' && typeof s.maxMessageChars !== 'number') return false
     if (typeof s.timeoutGraceMs !== 'undefined' && typeof s.timeoutGraceMs !== 'number') return false
+    if (
+      typeof s.stepCardMode !== 'undefined'
+      && s.stepCardMode !== 'same'
+      && s.stepCardMode !== 'new'
+    ) return false
   }
   return true
 }

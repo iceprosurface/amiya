@@ -190,20 +190,13 @@ export async function initializeOpencodeForDirectory(
   }
 
   const baseUrl = `http://127.0.0.1:${port}`
-  const fetchWithTimeout = (request: Request) =>
-    fetch(request, {
-      // @ts-ignore
-      timeout: false,
-    })
 
   const client = createOpencodeClient({
     baseUrl,
-    fetch: fetchWithTimeout,
   })
 
   const clientV2 = createOpencodeClientV2({
     baseUrl,
-    fetch: fetchWithTimeout as typeof fetch,
   })
 
   opencodeServers.set(directory, {
