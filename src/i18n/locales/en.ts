@@ -226,6 +226,8 @@ export const en = {
       subtaskGroup: "**Subtask**\n{{lines}}",
       toolOutputLabel: "Tool output",
       toolOutputLabelWithCount: "Tool output ({{count}})",
+      todoListLabel: "Todo items",
+      todoListLabelWithCount: "Todo items ({{count}})",
       toolOutputRunning: "Tool output (running)",
       toolOutputRunningBody: "Tool output in progress",
       thinkingTitle: "Thinking",

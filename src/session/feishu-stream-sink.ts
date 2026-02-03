@@ -174,6 +174,7 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
       const truncated = truncateForCard(rendered)
 
       if (currentMessageId) {
+        const previousMessageId = currentMessageId
         const ok = await updateMessage(
           currentMessageId,
           truncateForCard(combinedWithFooter),
@@ -182,10 +183,14 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
           lastMessageParts || undefined,
         )
         if (!ok) {
-          await sendNewMessage(truncated, "final")
+          const newMessageId = await sendNewMessage(truncated, "final")
+          if (previousMessageId && newMessageId !== previousMessageId) {
+            assistantCardStates.delete(previousMessageId)
+          }
+          currentMessageId = newMessageId
         }
       } else {
-        await sendNewMessage(truncated, "final")
+        currentMessageId = await sendNewMessage(truncated, "final")
       }
 
       const feishuClient = provider.getFeishuClient?.()
@@ -213,7 +218,12 @@ export function createFeishuStreamSink(options: StreamSinkOptions) {
         const ok = await updateMessage(currentMessageId, text, "final", "error")
         if (ok) return
       }
-      await sendNewMessage(text, "final")
+      const previousMessageId = currentMessageId
+      const newMessageId = await sendNewMessage(text, "final")
+      if (previousMessageId && newMessageId !== previousMessageId) {
+        assistantCardStates.delete(previousMessageId)
+      }
+      currentMessageId = newMessageId
     },
     detach() {
       currentMessageId = null

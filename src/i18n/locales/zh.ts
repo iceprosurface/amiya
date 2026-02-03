@@ -226,6 +226,8 @@ export const zh = {
       subtaskGroup: "**子任务**\n{{lines}}",
       toolOutputLabel: "工具输出",
       toolOutputLabelWithCount: "工具输出（{{count}}）",
+      todoListLabel: "待办事项",
+      todoListLabelWithCount: "待办事项（{{count}}）",
       toolOutputRunning: "工具输出（进行中）",
       toolOutputRunningBody: "工具输出进行中",
       thinkingTitle: "思考中",

@@ -459,6 +459,102 @@ export function createFeishuClient(
       return lines
     }
 
+    type TodoItem = {
+      id?: string
+      content: string
+      status?: string
+      priority?: string
+    }
+
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null
+
+    const parseTodoPayload = (value: unknown): unknown | null => {
+      if (typeof value === 'string') {
+        const trimmed = value.trim()
+        if (!trimmed) return null
+        try {
+          return JSON.parse(trimmed)
+        } catch {
+          return null
+        }
+      }
+      return value ?? null
+    }
+
+    const normalizeTodoItems = (value: unknown): TodoItem[] => {
+      if (!value) return []
+      if (Array.isArray(value)) return value as TodoItem[]
+      if (isRecord(value)) {
+        if (Array.isArray(value.todos)) return value.todos as TodoItem[]
+        if (Array.isArray(value.items)) return value.items as TodoItem[]
+      }
+      return []
+    }
+
+    const parseTodoItemsFromValue = (value: unknown): TodoItem[] => {
+      const items = normalizeTodoItems(value)
+      return items
+        .map((item) => {
+          if (!isRecord(item)) return null
+          const contentRaw = item.content ?? item.text ?? item.title ?? item.description
+          const content = typeof contentRaw === 'string' ? contentRaw.trim() : ''
+          if (!content) return null
+          const status = typeof item.status === 'string' ? item.status : undefined
+          const priority = typeof item.priority === 'string' ? item.priority : undefined
+          const id = typeof item.id === 'string' ? item.id : undefined
+          return { id, content, status, priority }
+        })
+        .filter((item): item is TodoItem => Boolean(item))
+    }
+
+    const readTodoItemsFromPart = (part: AssistantMessagePart): TodoItem[] => {
+      if (part.type !== 'tool') return []
+      const toolRaw = typeof part.tool === 'string' ? part.tool : ''
+      const tool = toolRaw.toLowerCase()
+      if (tool !== 'todowrite' && tool !== 'todo_write' && tool !== 'todo') return []
+      const state = part.state && typeof part.state === 'object'
+        ? (part.state as Record<string, unknown>)
+        : undefined
+      if (!state) return []
+      const payload = parseTodoPayload(state.output ?? state.input)
+      if (!payload) return []
+      return parseTodoItemsFromValue(payload)
+    }
+
+    const buildTodoLines = (parts: AssistantMessagePart[]) => {
+      const items: TodoItem[] = []
+      const index = new Map<string, number>()
+      for (const part of parts) {
+        const nextItems = readTodoItemsFromPart(part)
+        for (const item of nextItems) {
+          const key = item.id ? `id:${item.id}` : `content:${item.content}`
+          const existing = index.get(key)
+          if (existing !== undefined) {
+            items[existing] = item
+          } else {
+            index.set(key, items.length)
+            items.push(item)
+          }
+        }
+      }
+      return items.map((item) => {
+        const normalized = typeof item.status === 'string' ? item.status.toLowerCase() : ''
+        const status = normalized === 'completed'
+          ? 'completed'
+          : normalized === 'in_progress' || normalized === 'in-progress'
+            ? 'in_progress'
+            : 'pending'
+        const prefix = status === 'completed'
+          ? '[x]'
+          : status === 'in_progress'
+            ? '[~]'
+            : '[ ]'
+        const suffix = item.priority ? ` (${item.priority})` : ''
+        return `- ${prefix} ${item.content}${suffix}`
+      })
+    }
+
     const collectReasoningText = (parts: AssistantMessagePart[]) => {
       const lines: string[] = []
       for (const part of parts) {
@@ -544,6 +640,27 @@ export function createFeishuClient(
             elements.push({
               tag: 'markdown',
               content: t('feishu.subtaskGroup', { lines: subtaskLines.join('\n') }),
+            })
+          }
+
+          const todoLines = buildTodoLines(step.parts)
+          if (todoLines.length > 0) {
+            const todoTitle = todoLines.length > 1
+              ? t('feishu.todoListLabelWithCount', { count: todoLines.length })
+              : t('feishu.todoListLabel')
+            elements.push({
+              tag: 'collapsible_panel',
+              expanded: false,
+              header: {
+                title: {
+                  tag: 'plain_text',
+                  content: todoTitle,
+                },
+              },
+              elements: [{
+                tag: 'div',
+                text: { tag: 'lark_md', content: todoLines.join('\n') },
+              }],
             })
           }
 
