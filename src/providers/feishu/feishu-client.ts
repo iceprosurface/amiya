@@ -459,6 +459,41 @@ export function createFeishuClient(
       return lines
     }
 
+    const buildPanel = (params: {
+      title: string
+      elements: Record<string, unknown>[]
+      expanded?: boolean
+      titleTag?: 'plain_text' | 'markdown'
+    }) => ({
+      tag: 'collapsible_panel',
+      expanded: params.expanded ?? false,
+      background_color: 'grey',
+      border: {
+        color: 'grey',
+        corner_radius: '5px',
+      },
+      vertical_spacing: '8px',
+      padding: '8px 8px 8px 8px',
+      header: {
+        title: {
+          tag: params.titleTag ?? 'plain_text',
+          content: params.title,
+        },
+        background_color: 'grey',
+        vertical_align: 'center',
+        padding: '4px 8px 4px 8px',
+        icon: {
+          tag: 'standard_icon',
+          token: 'down-small-ccm_outlined',
+          color: 'blue',
+          size: '16px 16px',
+        },
+        icon_position: 'right',
+        icon_expanded_angle: -180,
+      },
+      elements: params.elements,
+    })
+
     type TodoItem = {
       id?: string
       content: string
@@ -482,30 +517,30 @@ export function createFeishuClient(
       return value ?? null
     }
 
-    const normalizeTodoItems = (value: unknown): TodoItem[] => {
+    const normalizeTodoItems = (value: unknown): unknown[] => {
       if (!value) return []
-      if (Array.isArray(value)) return value as TodoItem[]
+      if (Array.isArray(value)) return value
       if (isRecord(value)) {
-        if (Array.isArray(value.todos)) return value.todos as TodoItem[]
-        if (Array.isArray(value.items)) return value.items as TodoItem[]
+        if (Array.isArray(value.todos)) return value.todos
+        if (Array.isArray(value.items)) return value.items
       }
       return []
     }
 
     const parseTodoItemsFromValue = (value: unknown): TodoItem[] => {
       const items = normalizeTodoItems(value)
-      return items
-        .map((item) => {
-          if (!isRecord(item)) return null
-          const contentRaw = item.content ?? item.text ?? item.title ?? item.description
-          const content = typeof contentRaw === 'string' ? contentRaw.trim() : ''
-          if (!content) return null
-          const status = typeof item.status === 'string' ? item.status : undefined
-          const priority = typeof item.priority === 'string' ? item.priority : undefined
-          const id = typeof item.id === 'string' ? item.id : undefined
-          return { id, content, status, priority }
-        })
-        .filter((item): item is TodoItem => Boolean(item))
+      const parsed: TodoItem[] = []
+      for (const raw of items) {
+        if (!isRecord(raw)) continue
+        const contentRaw = raw.content ?? raw.text ?? raw.title ?? raw.description
+        const content = typeof contentRaw === 'string' ? contentRaw.trim() : ''
+        if (!content) continue
+        const status = typeof raw.status === 'string' ? raw.status : undefined
+        const priority = typeof raw.priority === 'string' ? raw.priority : undefined
+        const id = typeof raw.id === 'string' ? raw.id : undefined
+        parsed.push({ id, content, status, priority })
+      }
+      return parsed
     }
 
     const readTodoItemsFromPart = (part: AssistantMessagePart): TodoItem[] => {
@@ -600,22 +635,15 @@ export function createFeishuClient(
           const reasoningText = collectReasoningText(step.parts)
           if (reasoningText) {
             if (reasoningText.length > 150) {
-              elements.push({
-                tag: 'collapsible_panel',
-                expanded: false,
-                header: {
-                  title: {
-                    tag: 'plain_text',
-                    content: reasoningLabel,
-                  },
-                },
+              elements.push(buildPanel({
+                title: reasoningLabel,
                 elements: [
                   {
                     tag: 'div',
                     text: { tag: 'plain_text', content: reasoningText },
                   },
                 ],
-              })
+              }))
             } else {
               elements.push({
                 tag: 'markdown',
@@ -648,20 +676,13 @@ export function createFeishuClient(
             const todoTitle = todoLines.length > 1
               ? t('feishu.todoListLabelWithCount', { count: todoLines.length })
               : t('feishu.todoListLabel')
-            elements.push({
-              tag: 'collapsible_panel',
-              expanded: false,
-              header: {
-                title: {
-                  tag: 'plain_text',
-                  content: todoTitle,
-                },
-              },
+            elements.push(buildPanel({
+              title: todoTitle,
               elements: [{
                 tag: 'div',
                 text: { tag: 'lark_md', content: todoLines.join('\n') },
               }],
-            })
+            }))
           }
 
           const runs = buildToolRunsFromParts(step.parts)
@@ -669,17 +690,10 @@ export function createFeishuClient(
             const toolLabel = run.tool
               ? `${t('feishu.toolOutputLabel')}: ${run.tool}`
               : t('feishu.toolOutputLabel')
-            elements.push({
-              tag: 'collapsible_panel',
-              expanded: false,
-              header: {
-                title: {
-                  tag: 'plain_text',
-                  content: toolLabel,
-                },
-              },
+            elements.push(buildPanel({
+              title: toolLabel,
               elements: buildToolElements([run]),
-            })
+            }))
           }
         }
       })
@@ -700,17 +714,13 @@ export function createFeishuClient(
           ? t('feishu.metaTitleWithContext', { value: contextPercent })
           : t('feishu.metaTitle')
         const metaList = buildMetaList(footerContent)
-        elements.push({
-          tag: 'collapsible_panel',
-          expanded: false,
-          header: {
-            title: { tag: 'plain_text', content: metaTitle },
-          },
+        elements.push(buildPanel({
+          title: metaTitle,
           elements: [{
             tag: 'div',
             text: { tag: 'lark_md', content: metaList || footerContent },
           }],
-        })
+        }))
       }
     } else {
       const derived = (() => {
@@ -735,15 +745,8 @@ export function createFeishuClient(
         const thinkingTitle = params.streaming
           ? t('feishu.thinkingTitleStreaming')
           : t('feishu.thinkingTitleDone')
-        elements.push({
-          tag: 'collapsible_panel',
-          expanded: false,
-          header: {
-            title: {
-              tag: 'plain_text',
-              content: thinkingTitle,
-            },
-          },
+        elements.push(buildPanel({
+          title: thinkingTitle,
           elements: [
             {
               tag: 'div',
@@ -753,7 +756,7 @@ export function createFeishuClient(
               },
             },
           ],
-        })
+        }))
       }
 
       elements.push({
@@ -776,15 +779,8 @@ export function createFeishuClient(
         if (isSubtaskOnly) {
           const markerRe = new RegExp(`^${subtaskMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'u')
           const subtaskBody = trimmedDetails.replace(markerRe, '').trim()
-          elements.push({
-            tag: 'collapsible_panel',
-            expanded: false,
-            header: {
-              title: {
-                tag: 'plain_text',
-                content: params.streaming ? t('feishu.stepInProgress') : t('labels.subtask'),
-              },
-            },
+          elements.push(buildPanel({
+            title: params.streaming ? t('feishu.stepInProgress') : t('labels.subtask'),
             elements: [
               {
                 tag: 'div',
@@ -794,20 +790,13 @@ export function createFeishuClient(
                 },
               },
             ],
-          })
+          }))
           handledDetails = true
         }
 
         if (!handledDetails && params.streaming) {
-          elements.push({
-            tag: 'collapsible_panel',
-            expanded: false,
-            header: {
-              title: {
-                tag: 'plain_text',
-                content: t('feishu.toolOutputRunning'),
-              },
-            },
+          elements.push(buildPanel({
+            title: t('feishu.toolOutputRunning'),
             elements: [
               {
                 tag: 'div',
@@ -817,21 +806,14 @@ export function createFeishuClient(
                 },
               },
             ],
-          })
+          }))
           handledDetails = true
         }
 
         if (!handledDetails) {
           if (runs.length === 0) {
-            elements.push({
-              tag: 'collapsible_panel',
-              expanded: false,
-              header: {
-                title: {
-                  tag: 'plain_text',
-                  content: t('feishu.toolOutputLabel'),
-                },
-              },
+            elements.push(buildPanel({
+              title: t('feishu.toolOutputLabel'),
               elements: [{
                 tag: 'div',
                 text: {
@@ -839,21 +821,14 @@ export function createFeishuClient(
                   content: derived.details.trim(),
                 },
               }],
-            })
+            }))
           } else {
-            elements.push({
-              tag: 'collapsible_panel',
-              expanded: false,
-              header: {
-                title: {
-                  tag: 'plain_text',
-                  content: runs.length > 0
-                    ? t('feishu.toolOutputLabelWithCount', { count: runs.length })
-                    : t('feishu.toolOutputLabel'),
-                },
-              },
+            elements.push(buildPanel({
+              title: runs.length > 0
+                ? t('feishu.toolOutputLabelWithCount', { count: runs.length })
+                : t('feishu.toolOutputLabel'),
               elements: buildToolElements(runs),
-            })
+            }))
           }
         }
       }
@@ -871,17 +846,10 @@ export function createFeishuClient(
             content: metaList || footerContent,
           },
         }]
-        elements.push({
-          tag: 'collapsible_panel',
-          expanded: false,
-          header: {
-            title: {
-              tag: 'plain_text',
-              content: metaTitle,
-            },
-          },
+        elements.push(buildPanel({
+          title: metaTitle,
           elements: metaElements,
-        })
+        }))
       }
     }
 
