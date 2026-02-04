@@ -10,7 +10,7 @@ export interface FeishuConfig {
   appId: string
   appSecret: string
   useLark?: boolean
-  allowedChatIds?: string[]
+  botUserId?: string
   debug?: boolean
 }
 
@@ -21,6 +21,7 @@ export interface FeishuMessage {
   senderName: string
   text: string
   timestamp: string
+  mentions: string[]
   raw: MessageEventData
 }
 
@@ -29,19 +30,61 @@ export interface FeishuClient {
   stop(): void
   onMessage(handler: (message: FeishuMessage) => void | Promise<void>): void
   sendMessage(chatId: string, text: string): Promise<void>
+  getBotUserId(): Promise<string | null>
 }
 
-function parseMessageContent(content: string): string {
+function parseMessagePayload(content: string): { text: string; mentions: string[] } {
+  const fallback = { text: content, mentions: [] as string[] }
   try {
     const parsed = JSON.parse(content)
     if (parsed && typeof parsed === 'object') {
+      const mentionsRaw = (parsed as Record<string, unknown>).mentions
+      const mentions = Array.isArray(mentionsRaw)
+        ? mentionsRaw
+            .map((mention) => {
+              if (!mention || typeof mention !== 'object') return null
+              const record = mention as Record<string, unknown>
+              const id = record.id
+              if (typeof id === 'string') return id
+              if (id && typeof id === 'object') {
+                const idRecord = id as Record<string, unknown>
+                if (typeof idRecord.open_id === 'string') return idRecord.open_id
+                if (typeof idRecord.user_id === 'string') return idRecord.user_id
+              }
+              return null
+            })
+            .filter((value): value is string => Boolean(value))
+        : []
+
       const text = (parsed as Record<string, unknown>).text
-      if (typeof text === 'string') return text
+      if (typeof text === 'string') {
+        return { text, mentions }
+      }
+      return { text: content, mentions }
     }
   } catch {
     // fall through
   }
-  return content
+  return fallback
+}
+
+function extractMentionsFromEvent(data: MessageEventData): string[] {
+  const rawMentions = data.message?.mentions
+  if (!Array.isArray(rawMentions)) return []
+  return rawMentions
+    .map((mention) => {
+      if (!mention || typeof mention !== 'object') return null
+      const record = mention as Record<string, unknown>
+      const id = record.id
+      if (typeof id === 'string') return id
+      if (id && typeof id === 'object') {
+        const idRecord = id as Record<string, unknown>
+        if (typeof idRecord.open_id === 'string') return idRecord.open_id
+        if (typeof idRecord.user_id === 'string') return idRecord.user_id
+      }
+      return null
+    })
+    .filter((value): value is string => Boolean(value))
 }
 
 export function createFeishuClient(config: FeishuConfig): FeishuClient {
@@ -84,17 +127,12 @@ export function createFeishuClient(config: FeishuConfig): FeishuClient {
     return true
   }
 
-  function isChatAllowed(chatId: string): boolean {
-    if (!config.allowedChatIds || config.allowedChatIds.length === 0) return true
-    return config.allowedChatIds.includes(chatId)
-  }
-
   async function handleMessageEvent(data: MessageEventData): Promise<void> {
     const messageId = data.message?.message_id || ''
     if (!messageId || !shouldHandleMessage(messageId)) return
 
     const chatId = data.message?.chat_id || ''
-    if (!chatId || !isChatAllowed(chatId)) return
+    if (!chatId) return
 
     const senderId =
       data.sender?.sender_id?.open_id
@@ -104,7 +142,12 @@ export function createFeishuClient(config: FeishuConfig): FeishuClient {
       data.sender?.sender_type || senderId || 'unknown'
 
     const content = data.message?.content || ''
-    const text = parseMessageContent(content)
+    const parsed = parseMessagePayload(content)
+    const text = parsed.text
+    const mentionIds = new Set<string>([
+      ...parsed.mentions,
+      ...extractMentionsFromEvent(data),
+    ])
 
     const createTimeRaw = data.message?.create_time
     const createTimeMs = typeof createTimeRaw === 'string'
@@ -121,6 +164,7 @@ export function createFeishuClient(config: FeishuConfig): FeishuClient {
       senderName,
       text,
       timestamp,
+      mentions: Array.from(mentionIds),
       raw: data,
     }
 
@@ -133,6 +177,65 @@ export function createFeishuClient(config: FeishuConfig): FeishuClient {
   eventDispatcher.register({
     'im.message.receive_v1': handleMessageEvent,
   })
+
+  let cachedBotUserId: string | null = null
+
+  async function getBotUserId(): Promise<string | null> {
+    if (cachedBotUserId) return cachedBotUserId
+    if (config.botUserId) {
+      cachedBotUserId = config.botUserId
+      return cachedBotUserId
+    }
+
+    try {
+      const tokenResult = await client.auth.v3.tenantAccessToken.internal({
+        data: {
+          app_id: config.appId,
+          app_secret: config.appSecret,
+        },
+      })
+
+      const tokenRecord = tokenResult as Record<string, unknown>
+      const tokenData = tokenRecord.data as Record<string, unknown> | undefined
+      const tenantToken =
+        (typeof tokenData?.tenant_access_token === 'string'
+          ? tokenData.tenant_access_token
+          : null)
+        || (typeof tokenRecord.tenant_access_token === 'string'
+          ? tokenRecord.tenant_access_token
+          : null)
+
+      if (!tenantToken) return null
+
+      const botInfoResult = await client.request({
+        method: 'GET',
+        url: '/open-apis/bot/v3/info',
+      }, lark.withTenantToken(tenantToken))
+
+      const botInfoRecord = botInfoResult as Record<string, unknown>
+      const botInfoData = botInfoRecord.data as Record<string, unknown> | undefined
+      const bot = (botInfoData?.bot as Record<string, unknown> | undefined)
+        ?? (botInfoRecord.bot as Record<string, unknown> | undefined)
+
+      const openId = bot?.open_id ?? botInfoData?.open_id ?? botInfoRecord.open_id
+      const userId = bot?.user_id ?? botInfoData?.user_id ?? botInfoRecord.user_id
+
+      const resolved = typeof openId === 'string'
+        ? openId
+        : typeof userId === 'string'
+          ? userId
+          : null
+
+      if (resolved) {
+        cachedBotUserId = resolved
+        return cachedBotUserId
+      }
+    } catch {
+      return null
+    }
+
+    return null
+  }
 
   return {
     onMessage(handler) {
@@ -180,6 +283,9 @@ export function createFeishuClient(config: FeishuConfig): FeishuClient {
               content: JSON.stringify({ text }),
             },
       })
+    },
+    async getBotUserId(): Promise<string | null> {
+      return await getBotUserId()
     },
   }
 }

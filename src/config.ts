@@ -124,9 +124,6 @@ export const FEISHU_USE_LARK = toBool(
   process.env.FEISHU_USE_LARK || fileConfig.feishuUseLark,
   false,
 )
-export const FEISHU_ALLOWED_CHAT_IDS = toStringList(
-  process.env.FEISHU_ALLOWED_CHAT_IDS || fileConfig.feishuAllowedChatIds,
-)
 
 export const FEISHU_MAIN_CHAT_ID =
   process.env.FEISHU_MAIN_CHAT_ID || fileConfig.feishuMainChatId || ''

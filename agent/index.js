@@ -227,8 +227,16 @@ async function getLatestAssistantUsage(client, sessionId, directory) {
         info?.providerID || info?.provider?.id || info?.model?.providerID || null
       const tokens = info?.tokens || info?.usage?.tokens || null
       const cost = info?.cost ?? info?.usage?.cost ?? null
+      const contextLimit =
+        info?.contextWindow ||
+        info?.context_window ||
+        info?.model?.contextWindow ||
+        info?.model?.context_window ||
+        info?.model?.maxTokens ||
+        info?.model?.max_tokens ||
+        null
 
-      return { modelID, providerID, tokens, cost }
+      return { modelID, providerID, tokens, cost, contextLimit }
     }
   } catch {
   }
@@ -354,15 +362,18 @@ async function run() {
     if (usage) {
       let contextPercent = null
       if (usage.tokens && typeof usage.tokens.input === 'number') {
-        const contextLimit = await withTimeout(
-          getModelContextLimit(
-            client,
-            usage.modelID,
-            usage.providerID,
-            workDir,
-          ),
-          1500,
-        )
+        let contextLimit = usage.contextLimit
+        if (!contextLimit) {
+          contextLimit = await withTimeout(
+            getModelContextLimit(
+              client,
+              usage.modelID,
+              usage.providerID,
+              workDir,
+            ),
+            1500,
+          )
+        }
         if (contextLimit && contextLimit > 0) {
           contextPercent = Math.min(
             100,

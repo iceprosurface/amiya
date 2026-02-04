@@ -4,7 +4,6 @@ import path from 'path'
 
 import {
   ASSISTANT_NAME,
-  FEISHU_ALLOWED_CHAT_IDS,
   FEISHU_APP_ID,
   FEISHU_APP_SECRET,
   FEISHU_MAIN_CHAT_ID,
@@ -153,6 +152,13 @@ async function handleMainCommand(
       }
     }
 
+    if (nameParts.length === 0) {
+      return {
+        handled: true,
+        response: `请提供群名称。用法：@${ASSISTANT_NAME} /register <chat_id> <name>`,
+      }
+    }
+
     if (registeredGroups[targetChatId]) {
       return {
         handled: true,
@@ -160,7 +166,13 @@ async function handleMainCommand(
       }
     }
 
-    const name = nameParts.join(' ').trim() || targetChatId
+    const name = nameParts.join(' ').trim()
+    if (!name) {
+      return {
+        handled: true,
+        response: `请提供群名称。用法：@${ASSISTANT_NAME} /register <chat_id> <name>`,
+      }
+    }
     const folder = sanitizeGroupFolder(name)
     registerGroup(targetChatId, {
       name,
@@ -284,7 +296,9 @@ async function processMessage(msg: NewMessage): Promise<void> {
     return
   }
 
-  if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return
+  if (!isMainGroup) {
+    // Non-main groups are filtered at ingestion based on bot mentions.
+  }
 
   const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || ''
   const missedMessages = getMessagesSince(
@@ -785,14 +799,49 @@ async function connectFeishu(): Promise<void> {
     appId: FEISHU_APP_ID,
     appSecret: FEISHU_APP_SECRET,
     useLark: FEISHU_USE_LARK,
-    allowedChatIds: FEISHU_ALLOWED_CHAT_IDS,
   })
+
+  let cachedBotUserId: string | null = null
+  let botUserIdResolved = false
+  const resolveBotUserId = async (): Promise<string | null> => {
+    if (botUserIdResolved) return cachedBotUserId
+    botUserIdResolved = true
+    try {
+      cachedBotUserId = feishuClient ? await feishuClient.getBotUserId() : null
+    } catch {
+      cachedBotUserId = null
+    }
+    if (cachedBotUserId) {
+      logger.info({ botUserId: cachedBotUserId }, 'Resolved bot user id')
+    }
+    return cachedBotUserId
+  }
 
   feishuClient.onMessage(async (message) => {
     const chatId = message.chatId
     storeChatMetadata(chatId, message.timestamp)
 
     if (registeredGroups[chatId]) {
+      const group = registeredGroups[chatId]
+      const isMain = group.folder === MAIN_GROUP_FOLDER
+      if (!isMain) {
+        const botUserId = await resolveBotUserId()
+        const mentionedBot = botUserId
+          ? message.mentions.includes(botUserId)
+          : false
+        if (!mentionedBot && !TRIGGER_PATTERN.test(message.text)) {
+          logger.info(
+            {
+              chatId,
+              text: message.text,
+              mentions: message.mentions,
+              botUserId,
+            },
+            'Ignoring message without bot mention',
+          )
+          return
+        }
+      }
       storeMessage({
         id: message.messageId,
         chatJid: chatId,

@@ -71,19 +71,6 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
     }
   }
 
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.opencode',
-  )
-  fs.mkdirSync(groupSessionsDir, { recursive: true })
-  mounts.push({
-    hostPath: groupSessionsDir,
-    containerPath: '/home/node/.opencode',
-    readonly: false,
-  })
-
   const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder)
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true })
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true })
@@ -168,6 +155,18 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   mounts.push({
     hostPath: opencodeLogDir,
     containerPath: '/root/.local/share/opencode/log',
+    readonly: false,
+  })
+
+  const opencodeStorageDir = path.join(
+    DATA_DIR,
+    'opencode-storage',
+    group.folder,
+  )
+  fs.mkdirSync(opencodeStorageDir, { recursive: true })
+  mounts.push({
+    hostPath: opencodeStorageDir,
+    containerPath: '/root/.local/share/opencode/storage',
     readonly: false,
   })
 
