@@ -16,6 +16,8 @@ import { RegisteredGroup } from './types.js'
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---'
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---'
+const IPC_MCP_SCRIPT_NAME = 'amiya-ipc-mcp.js'
+const IPC_MCP_SOURCE = path.join(process.cwd(), 'scripts', 'ipc-mcp-server.js')
 
 export interface ContainerInput {
   prompt: string
@@ -75,6 +77,7 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   const groupIpcDir = path.join(groupDir, 'ipc')
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true })
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true })
+  ensureIpcMcpScript(groupIpcDir)
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -166,6 +169,37 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   return mounts
 }
 
+function ensureIpcMcpScript(groupIpcDir: string): void {
+  if (!fs.existsSync(IPC_MCP_SOURCE)) {
+    logger.warn({ source: IPC_MCP_SOURCE }, 'IPC MCP script not found')
+    return
+  }
+
+  const targetPath = path.join(groupIpcDir, IPC_MCP_SCRIPT_NAME)
+  try {
+    fs.copyFileSync(IPC_MCP_SOURCE, targetPath)
+  } catch (err) {
+    logger.warn(
+      { source: IPC_MCP_SOURCE, target: targetPath, err },
+      'Failed to copy IPC MCP script',
+    )
+  }
+}
+
+function writeIpcContext(
+  groupFolder: string,
+  chatJid: string,
+  isMain: boolean,
+): void {
+  const groupIpcDir = path.join(GROUPS_DIR, groupFolder, 'ipc')
+  fs.mkdirSync(groupIpcDir, { recursive: true })
+  const contextPath = path.join(groupIpcDir, 'context.json')
+  fs.writeFileSync(
+    contextPath,
+    JSON.stringify({ chatJid, groupFolder, isMain }, null, 2),
+  )
+}
+
 function buildContainerArgs(mounts: VolumeMount[], containerName?: string): string[] {
   const args: string[] = ['run', '-i', '--rm']
 
@@ -195,6 +229,7 @@ export async function runContainerAgent(
   const startTime = Date.now()
   const groupDir = path.join(GROUPS_DIR, group.folder)
   fs.mkdirSync(groupDir, { recursive: true })
+  writeIpcContext(group.folder, input.chatJid, input.isMain)
 
   const mounts = buildVolumeMounts(group, input.isMain)
   const safeFolder = group.folder.replace(/[^a-zA-Z0-9_.-]/g, '-')

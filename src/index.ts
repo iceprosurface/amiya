@@ -516,6 +516,7 @@ async function processTaskIpc(
     schedule_value?: string
     context_mode?: string
     groupFolder?: string
+    target_group?: string
     chatJid?: string
     jid?: string
     name?: string
@@ -551,9 +552,12 @@ async function processTaskIpc(
         data.prompt
         && data.schedule_type
         && data.schedule_value
-        && data.groupFolder
       ) {
-        const targetGroup = data.groupFolder
+        const targetGroup = data.groupFolder || data.target_group
+        if (!targetGroup) {
+          logger.warn({ sourceGroup }, 'Missing target group for schedule_task')
+          break
+        }
         if (!isMain && targetGroup !== sourceGroup) {
           logger.warn(
             { sourceGroup, targetGroup },
