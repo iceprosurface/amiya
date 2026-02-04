@@ -1,13 +1,13 @@
+# syntax=docker/dockerfile:1.6
 FROM node:24
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl unzip tar git openssh-client \
-  && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+  --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends bash ca-certificates unzip tar git openssh-client
 
 ENV HOME="/root"
-RUN /bin/bash -lc "set -euo pipefail; curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path"
-
-ENV PATH="/root/.opencode/bin:${PATH}"
+RUN --mount=type=cache,target=/root/.npm npm install -g opencode-ai
 
 WORKDIR /app
 COPY agent/package.json ./
