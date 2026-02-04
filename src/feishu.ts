@@ -1,5 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk'
 
+import { feishuPostToJson, markdownToFeishuPost } from './feishu-markdown.js'
+
 import { logger } from './logger.js'
 
 type MessageEventData = Parameters<NonNullable<lark.EventHandles['im.message.receive_v1']>>[0]
@@ -161,13 +163,22 @@ export function createFeishuClient(config: FeishuConfig): FeishuClient {
       logger.info('Feishu WebSocket stopped')
     },
     async sendMessage(chatId: string, text: string): Promise<void> {
+      const post = markdownToFeishuPost(text)
+      const hasPostContent = post.content.length > 0 || Boolean(post.title)
+
       await client.im.message.create({
         params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text }),
-        },
+        data: hasPostContent
+          ? {
+              receive_id: chatId,
+              msg_type: 'post',
+              content: feishuPostToJson(post),
+            }
+          : {
+              receive_id: chatId,
+              msg_type: 'text',
+              content: JSON.stringify({ text }),
+            },
       })
     },
   }

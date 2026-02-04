@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { markdownToFeishuPost } from "../src/providers/feishu/markdown-adapter.js";
+import { markdownToFeishuPost } from "../src/feishu-markdown.js";
 import {
   extractTextFromPromptResult,
   extractTextWithAttachmentsFromPromptResult,

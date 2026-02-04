@@ -118,6 +118,13 @@ async function runTask(
     error,
   })
 
+  if (error) {
+    await deps.sendMessage(
+      task.chat_jid,
+      `任务执行失败：${error}`,
+    )
+  }
+
   let nextRun: string | null = null
   if (task.schedule_type === 'cron') {
     const interval = cronParser.parseExpression(task.schedule_value, {

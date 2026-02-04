@@ -31,6 +31,8 @@ import {
   getAllChats,
   getAllTasks,
   getLastGroupSync,
+  getRegisteredGroupCount,
+  getRegisteredGroups,
   getMessagesSince,
   getNewMessages,
   getTaskById,
@@ -38,6 +40,7 @@ import {
   setLastGroupSync,
   storeChatMetadata,
   storeMessage,
+  upsertRegisteredGroup,
   updateTask,
 } from './db.js'
 import { createFeishuClient } from './feishu.js'
@@ -53,6 +56,135 @@ let sessions: Session = {}
 let registeredGroups: Record<string, RegisteredGroup> = {}
 let lastAgentTimestamp: Record<string, string> = {}
 
+type CommandResult = {
+  handled: boolean
+  response?: string
+}
+
+function sanitizeGroupFolder(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || `group-${Date.now()}`
+}
+
+function normalizeCommandContent(content: string): string {
+  return content
+    .replace(/<at[^>]*>([^<]+)<\/at>/gi, '@$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function parseMainCommand(content: string): { name: string; args: string[] } | null {
+  const normalized = normalizeCommandContent(content)
+  if (!normalized) return null
+
+  const tokens = normalized.split(' ')
+  const commandIndex = tokens.findIndex((token) => token.startsWith('/'))
+  if (commandIndex === -1) return null
+
+  const commandToken = tokens[commandIndex]
+  const name = commandToken.slice(1).toLowerCase()
+  if (!name) return null
+
+  if (commandIndex !== 0) {
+    const prevToken = tokens[commandIndex - 1]
+    if (!prevToken || !prevToken.startsWith('@')) return null
+  }
+
+  const args = tokens.slice(commandIndex + 1)
+  return { name, args }
+}
+
+async function handleMainCommand(
+  content: string,
+  chatId: string,
+  isMainGroup: boolean,
+): Promise<CommandResult> {
+  const parsed = parseMainCommand(content)
+  if (!parsed) return { handled: false }
+
+  if (!isMainGroup) {
+    return {
+      handled: true,
+      response: '仅主控群支持该命令。',
+    }
+  }
+
+  if (parsed.name === 'help' || parsed.name === 'commands') {
+    return {
+      handled: true,
+      response: [
+        '可用命令：',
+        `- @${ASSISTANT_NAME} /register <chat_id> [name]`,
+        `- @${ASSISTANT_NAME} /list_groups`,
+        `- @${ASSISTANT_NAME} /commands`,
+      ].join('\n'),
+    }
+  }
+
+  if (parsed.name === 'list_groups') {
+    const groups = Object.entries(registeredGroups)
+    if (groups.length === 0) {
+      return {
+        handled: true,
+        response: '暂无已注册的群。',
+      }
+    }
+
+    const lines = groups.map(([jid, group]) => {
+      return `${group.name} | ${jid} | ${group.folder}`
+    })
+
+    return {
+      handled: true,
+      response: ['已注册群：', ...lines].join('\n'),
+    }
+  }
+
+  if (parsed.name === 'register') {
+    const [targetChatId, ...nameParts] = parsed.args
+    if (!targetChatId) {
+      return {
+        handled: true,
+        response: `用法：@${ASSISTANT_NAME} /register <chat_id> [name]`,
+      }
+    }
+
+    if (registeredGroups[targetChatId]) {
+      return {
+        handled: true,
+        response: `该 chat 已注册：${registeredGroups[targetChatId].name}`,
+      }
+    }
+
+    const name = nameParts.join(' ').trim() || targetChatId
+    const folder = sanitizeGroupFolder(name)
+    registerGroup(targetChatId, {
+      name,
+      folder,
+      trigger: `@${ASSISTANT_NAME}`,
+      added_at: new Date().toISOString(),
+    })
+
+    return {
+      handled: true,
+      response: [
+        `已注册：${name}`,
+        `chat_id: ${targetChatId}`,
+        `folder: ${folder}`,
+      ].join('\n'),
+    }
+  }
+
+  return {
+    handled: true,
+    response: `未知命令：${parsed.name}（用 /commands 查看）`,
+  }
+}
+
 function loadState(): void {
   const statePath = path.join(DATA_DIR, 'router_state.json')
   const state = loadJson<{
@@ -62,7 +194,7 @@ function loadState(): void {
   lastTimestamp = state.last_timestamp || ''
   lastAgentTimestamp = state.last_agent_timestamp || {}
   sessions = loadJson(path.join(DATA_DIR, 'sessions.json'), {})
-  registeredGroups = loadJson(path.join(DATA_DIR, 'registered_groups.json'), {})
+  registeredGroups = getRegisteredGroups()
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
@@ -79,7 +211,7 @@ function saveState(): void {
 
 function registerGroup(chatId: string, group: RegisteredGroup): void {
   registeredGroups[chatId] = group
-  saveJson(path.join(DATA_DIR, 'registered_groups.json'), registeredGroups)
+  upsertRegisteredGroup(chatId, group)
 
   const groupDir = path.join(GROUPS_DIR, group.folder)
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true })
@@ -138,7 +270,19 @@ async function processMessage(msg: NewMessage): Promise<void> {
   if (!group) return
 
   const content = msg.content.trim()
+  logger.info(
+    { chatId: msg.chat_jid, content: msg.content },
+    'Incoming message content',
+  )
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER
+
+  const commandResult = await handleMainCommand(content, msg.chat_jid, isMainGroup)
+  if (commandResult.handled) {
+    if (commandResult.response) {
+      await sendMessage(msg.chat_jid, commandResult.response)
+    }
+    return
+  }
 
   if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return
 
@@ -169,9 +313,11 @@ async function processMessage(msg: NewMessage): Promise<void> {
 
   const response = await runAgent(group, prompt, msg.chat_jid)
 
-  if (response) {
+  if (response.result) {
     lastAgentTimestamp[msg.chat_jid] = msg.timestamp
-    await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`)
+    await sendMessage(msg.chat_jid, response.result)
+  } else if (response.error) {
+    await sendMessage(msg.chat_jid, `请求失败：${response.error}`)
   }
 }
 
@@ -179,7 +325,7 @@ async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatId: string,
-): Promise<string | null> {
+): Promise<{ result: string | null; error?: string }> {
   const isMain = group.folder === MAIN_GROUP_FOLDER
   const sessionId = sessions[group.folder]
 
@@ -225,13 +371,16 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       )
-      return null
+      return { result: null, error: output.error || 'Container error' }
     }
 
-    return output.result
+    return { result: output.result }
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error')
-    return null
+    return {
+      result: null,
+      error: err instanceof Error ? err.message : String(err),
+    }
   }
 }
 
@@ -284,10 +433,7 @@ function startIpcWatcher(): void {
                   isMain
                   || (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await sendMessage(
-                    data.chatJid,
-                    `${ASSISTANT_NAME}: ${data.text}`,
-                  )
+                  await sendMessage(data.chatJid, data.text)
                   logger.info(
                     { chatId: data.chatJid, sourceGroup },
                     'IPC message sent',

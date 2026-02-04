@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 
 import { STORE_DIR } from './config.js'
-import { NewMessage, ScheduledTask, TaskRunLog } from './types.js'
+import { NewMessage, RegisteredGroup, ScheduledTask, TaskRunLog } from './types.js'
 
 let db: Database.Database
 
@@ -59,7 +59,89 @@ export function initDatabase(): void {
       FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+
+    CREATE TABLE IF NOT EXISTS registered_groups (
+      chat_jid TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      folder TEXT NOT NULL,
+      trigger TEXT NOT NULL,
+      added_at TEXT NOT NULL,
+      container_config TEXT
+    );
   `)
+}
+
+export function getRegisteredGroupCount(): number {
+  const row = db
+    .prepare('SELECT COUNT(*) as count FROM registered_groups')
+    .get() as { count: number } | undefined
+  return row?.count ?? 0
+}
+
+export function upsertRegisteredGroup(
+  chatJid: string,
+  group: RegisteredGroup,
+): void {
+  const containerConfig = group.containerConfig
+    ? JSON.stringify(group.containerConfig)
+    : null
+  db.prepare(
+    `
+    INSERT INTO registered_groups (chat_jid, name, folder, trigger, added_at, container_config)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(chat_jid) DO UPDATE SET
+      name = excluded.name,
+      folder = excluded.folder,
+      trigger = excluded.trigger,
+      added_at = excluded.added_at,
+      container_config = excluded.container_config
+  `,
+  ).run(
+    chatJid,
+    group.name,
+    group.folder,
+    group.trigger,
+    group.added_at,
+    containerConfig,
+  )
+}
+
+export function getRegisteredGroups(): Record<string, RegisteredGroup> {
+  const rows = db
+    .prepare(
+      `
+    SELECT chat_jid, name, folder, trigger, added_at, container_config
+    FROM registered_groups
+  `,
+    )
+    .all() as Array<{
+      chat_jid: string
+      name: string
+      folder: string
+      trigger: string
+      added_at: string
+      container_config: string | null
+    }>
+
+  const groups: Record<string, RegisteredGroup> = {}
+  for (const row of rows) {
+    let containerConfig: RegisteredGroup['containerConfig'] | undefined
+    if (row.container_config) {
+      try {
+        containerConfig = JSON.parse(row.container_config)
+      } catch {
+        containerConfig = undefined
+      }
+    }
+    groups[row.chat_jid] = {
+      name: row.name,
+      folder: row.folder,
+      trigger: row.trigger,
+      added_at: row.added_at,
+      containerConfig,
+    }
+  }
+  return groups
 }
 
 export function storeChatMetadata(

@@ -14,6 +14,7 @@ COPY agent/package.json ./
 RUN npm install --omit=dev
 
 COPY agent/index.js ./index.js
+COPY agent/plugins/ ./plugins/
 
 WORKDIR /workspace
 CMD ["node", "/app/index.js"]

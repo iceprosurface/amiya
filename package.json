@@ -25,7 +25,10 @@
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^4.9.0",
     "pino": "^9.6.0",
-    "pino-pretty": "^13.1.1"
+    "pino-pretty": "^13.1.1",
+    "remark-gfm": "^4.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

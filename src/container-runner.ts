@@ -124,6 +124,53 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
     mounts.push(...validatedMounts)
   }
 
+  const sharedAgentDir = path.join(projectRoot, '.amiya', 'agent-share')
+  const legacySystemPrompt = path.join(projectRoot, '.amiya', 'system.md')
+  const sharedSystemPrompt = path.join(sharedAgentDir, 'system.md')
+  if (fs.existsSync(legacySystemPrompt)) {
+    fs.mkdirSync(sharedAgentDir, { recursive: true })
+    if (!fs.existsSync(sharedSystemPrompt)) {
+      fs.copyFileSync(legacySystemPrompt, sharedSystemPrompt)
+    }
+  }
+  if (fs.existsSync(sharedAgentDir) && fs.statSync(sharedAgentDir).isDirectory()) {
+    mounts.push({
+      hostPath: sharedAgentDir,
+      containerPath: '/workspace/shared',
+      readonly: true,
+    })
+  }
+
+  const opencodeConfigDir = path.join(projectRoot, '.amiya', 'opencode-global')
+  if (fs.existsSync(opencodeConfigDir) && fs.statSync(opencodeConfigDir).isDirectory()) {
+    mounts.push({
+      hostPath: opencodeConfigDir,
+      containerPath: '/workspace/opencode-global',
+      readonly: true,
+    })
+  }
+
+  const opencodeShareDir = path.join(projectRoot, '.amiya', 'opencode-share')
+  if (fs.existsSync(opencodeShareDir) && fs.statSync(opencodeShareDir).isDirectory()) {
+    mounts.push({
+      hostPath: opencodeShareDir,
+      containerPath: '/workspace/opencode-share',
+      readonly: true,
+    })
+  }
+
+  const opencodeLogDir = path.join(
+    DATA_DIR,
+    'opencode-log',
+    group.folder,
+  )
+  fs.mkdirSync(opencodeLogDir, { recursive: true })
+  mounts.push({
+    hostPath: opencodeLogDir,
+    containerPath: '/root/.local/share/opencode/log',
+    readonly: false,
+  })
+
   return mounts
 }
 
@@ -161,6 +208,10 @@ export async function runContainerAgent(
       group: group.name,
       mountCount: mounts.length,
       isMain: input.isMain,
+      mounts: mounts.map(
+        (m) =>
+          `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
+      ),
     },
     'Spawning container agent',
   )
