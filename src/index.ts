@@ -1,257 +1,696 @@
-import type { Logger } from "winston";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { execSync } from 'child_process'
+import fs from 'fs'
+import path from 'path'
 
 import {
-  loadRuntimeConfig,
-  setDataDir,
-  setWorkspaceBaseDir,
-  setWorkspaceJoinRequiresApproval,
-} from "./config.js";
-import { initI18n, t } from "./i18n/index.js";
-import { defaultLogger, setupLogger } from "./logger/index.js";
+  ASSISTANT_NAME,
+  FEISHU_ALLOWED_CHAT_IDS,
+  FEISHU_APP_ID,
+  FEISHU_APP_SECRET,
+  FEISHU_MAIN_CHAT_ID,
+  FEISHU_MAIN_CHAT_NAME,
+  FEISHU_USE_LARK,
+  DATA_DIR,
+  GROUPS_DIR,
+  IPC_POLL_INTERVAL,
+  MAIN_GROUP_FOLDER,
+  POLL_INTERVAL,
+  TIMEZONE,
+  TRIGGER_PATTERN,
+  CONTAINER_RUNTIME,
+} from './config.js'
 import {
-  validateConfig,
-  type FeishuConfig,
-} from "./providers/feishu/feishu-config.js";
-import { createFeishuProvider } from "./providers/feishu/feishu-provider.js";
-import { acquireSingleInstanceLock } from "./runtime/single-instance-lock.js";
-import { shutdownOpencodeServers } from "./opencode.js";
-import { handleIncomingMessage } from "./session/session-handler.js";
-import { getRuntimeVersion } from "./version.js";
+  AvailableGroup,
+  runContainerAgent,
+  writeGroupsSnapshot,
+  writeTasksSnapshot,
+} from './container-runner.js'
+import {
+  createTask,
+  deleteTask,
+  getAllChats,
+  getAllTasks,
+  getLastGroupSync,
+  getMessagesSince,
+  getNewMessages,
+  getTaskById,
+  initDatabase,
+  setLastGroupSync,
+  storeChatMetadata,
+  storeMessage,
+  updateTask,
+} from './db.js'
+import { createFeishuClient } from './feishu.js'
+import { logger } from './logger.js'
+import { startSchedulerLoop } from './task-scheduler.js'
+import { NewMessage, RegisteredGroup, Session } from './types.js'
+import { loadJson, saveJson } from './utils.js'
 
-export async function startAmiya(targetDir: string) {
-  const logger = setupLogger(targetDir);
-  logger.info(`Amiya starting... target: ${targetDir}`);
+const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000
 
-  setDataDir(join(targetDir, ".amiya"));
-  const runtimeConfig = loadRuntimeConfig((message, level) => {
-    logger.log({ level: level || "info", message });
-  });
-  initI18n(runtimeConfig.locale);
-  if (runtimeConfig.workspaceDir) {
-    setWorkspaceBaseDir(runtimeConfig.workspaceDir);
+let lastTimestamp = ''
+let sessions: Session = {}
+let registeredGroups: Record<string, RegisteredGroup> = {}
+let lastAgentTimestamp: Record<string, string> = {}
+
+function loadState(): void {
+  const statePath = path.join(DATA_DIR, 'router_state.json')
+  const state = loadJson<{
+    last_timestamp?: string
+    last_agent_timestamp?: Record<string, string>
+  }>(statePath, {})
+  lastTimestamp = state.last_timestamp || ''
+  lastAgentTimestamp = state.last_agent_timestamp || {}
+  sessions = loadJson(path.join(DATA_DIR, 'sessions.json'), {})
+  registeredGroups = loadJson(path.join(DATA_DIR, 'registered_groups.json'), {})
+  logger.info(
+    { groupCount: Object.keys(registeredGroups).length },
+    'State loaded',
+  )
+}
+
+function saveState(): void {
+  saveJson(path.join(DATA_DIR, 'router_state.json'), {
+    last_timestamp: lastTimestamp,
+    last_agent_timestamp: lastAgentTimestamp,
+  })
+  saveJson(path.join(DATA_DIR, 'sessions.json'), sessions)
+}
+
+function registerGroup(chatId: string, group: RegisteredGroup): void {
+  registeredGroups[chatId] = group
+  saveJson(path.join(DATA_DIR, 'registered_groups.json'), registeredGroups)
+
+  const groupDir = path.join(GROUPS_DIR, group.folder)
+  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true })
+
+  logger.info(
+    { chatId, name: group.name, folder: group.folder },
+    'Group registered',
+  )
+}
+
+function ensureMainGroupRegistered(): void {
+  if (!FEISHU_MAIN_CHAT_ID) {
+    logger.error('FEISHU_MAIN_CHAT_ID is required to register the main group')
+    process.exit(1)
   }
-  if (typeof runtimeConfig.workspaceJoinRequiresApproval === "boolean") {
-    setWorkspaceJoinRequiresApproval(runtimeConfig.workspaceJoinRequiresApproval);
+
+  if (!registeredGroups[FEISHU_MAIN_CHAT_ID]) {
+    registerGroup(FEISHU_MAIN_CHAT_ID, {
+      name: FEISHU_MAIN_CHAT_NAME,
+      folder: MAIN_GROUP_FOLDER,
+      trigger: `@${ASSISTANT_NAME}`,
+      added_at: new Date().toISOString(),
+    })
+  }
+}
+
+async function syncGroupMetadata(force = false): Promise<void> {
+  if (!force) {
+    const lastSync = getLastGroupSync()
+    if (lastSync) {
+      const lastSyncTime = new Date(lastSync).getTime()
+      if (Date.now() - lastSyncTime < GROUP_SYNC_INTERVAL_MS) return
+    }
   }
 
-  const loaded = loadFeishuConfig(targetDir, logger);
-  if (!loaded) {
-    logger.error(t("index.feishuInvalid"));
-    logger.info(t("index.feishuHint"));
-    process.exit(1);
-  }
+  setLastGroupSync()
+  logger.info('Group metadata sync skipped for Feishu')
+}
 
-  const { config, path: configPath } = loaded;
-  logger.info(`Loaded config: ${configPath}`);
-  logger.info(`Config directory: ${dirname(configPath)}`);
+function getAvailableGroups(): AvailableGroup[] {
+  const chats = getAllChats()
+  const registeredJids = new Set(Object.keys(registeredGroups))
+
+  return chats
+    .filter((c) => c.jid !== '__group_sync__')
+    .map((c) => ({
+      jid: c.jid,
+      name: c.name,
+      lastActivity: c.last_message_time,
+      isRegistered: registeredJids.has(c.jid),
+    }))
+}
+
+async function processMessage(msg: NewMessage): Promise<void> {
+  const group = registeredGroups[msg.chat_jid]
+  if (!group) return
+
+  const content = msg.content.trim()
+  const isMainGroup = group.folder === MAIN_GROUP_FOLDER
+
+  if (!isMainGroup && !TRIGGER_PATTERN.test(content)) return
+
+  const sinceTimestamp = lastAgentTimestamp[msg.chat_jid] || ''
+  const missedMessages = getMessagesSince(
+    msg.chat_jid,
+    sinceTimestamp,
+    ASSISTANT_NAME,
+  )
+
+  const lines = missedMessages.map((m) => {
+    const escapeXml = (s: string) =>
+      s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+    return `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`
+  })
+  const prompt = `<messages>\n${lines.join('\n')}\n</messages>`
+
+  if (!prompt) return
+
+  logger.info(
+    { group: group.name, messageCount: missedMessages.length },
+    'Processing message',
+  )
+
+  const response = await runAgent(group, prompt, msg.chat_jid)
+
+  if (response) {
+    lastAgentTimestamp[msg.chat_jid] = msg.timestamp
+    await sendMessage(msg.chat_jid, `${ASSISTANT_NAME}: ${response}`)
+  }
+}
+
+async function runAgent(
+  group: RegisteredGroup,
+  prompt: string,
+  chatId: string,
+): Promise<string | null> {
+  const isMain = group.folder === MAIN_GROUP_FOLDER
+  const sessionId = sessions[group.folder]
+
+  const tasks = getAllTasks()
+  writeTasksSnapshot(
+    group.folder,
+    isMain,
+    tasks.map((t) => ({
+      id: t.id,
+      groupFolder: t.group_folder,
+      prompt: t.prompt,
+      schedule_type: t.schedule_type,
+      schedule_value: t.schedule_value,
+      status: t.status,
+      next_run: t.next_run,
+    })),
+  )
+
+  const availableGroups = getAvailableGroups()
+  writeGroupsSnapshot(
+    group.folder,
+    isMain,
+    availableGroups,
+    new Set(Object.keys(registeredGroups)),
+  )
 
   try {
-    process.chdir(targetDir);
-    logger.debug(`Working directory: ${targetDir}`);
+    const output = await runContainerAgent(group, {
+      prompt,
+      sessionId,
+      groupFolder: group.folder,
+      chatJid: chatId,
+      isMain,
+    })
+
+    if (output.newSessionId) {
+      sessions[group.folder] = output.newSessionId
+      saveJson(path.join(DATA_DIR, 'sessions.json'), sessions)
+    }
+
+    if (output.status === 'error') {
+      logger.error(
+        { group: group.name, error: output.error },
+        'Container agent error',
+      )
+      return null
+    }
+
+    return output.result
   } catch (err) {
-    logger.warn(`Failed to chdir: ${err}`);
+    logger.error({ group: group.name, err }, 'Agent error')
+    return null
   }
+}
 
-  const runtimeVersion = getRuntimeVersion();
-  if (runtimeVersion) {
-    logger.info(`Version: ${runtimeVersion}`);
-  }
+let feishuClient: ReturnType<typeof createFeishuClient> | null = null
 
-  let lockRelease: (() => void) | null = null;
+async function sendMessage(chatId: string, text: string): Promise<void> {
+  if (!feishuClient) return
   try {
-    const lock = acquireSingleInstanceLock(
-      join(targetDir, ".amiya", "amiya.lock"),
-      (msg, level) => {
-        logger.log({ level: level || "info", message: msg });
-      },
-    );
-    lockRelease = lock.release;
-  } catch (e) {
-    logger.error(`Failed to acquire lock: ${e}`);
-    process.exit(1);
+    await feishuClient.sendMessage(chatId, text)
+    logger.info({ chatId, length: text.length }, 'Message sent')
+  } catch (err) {
+    logger.error({ chatId, err }, 'Failed to send message')
   }
-
-  const provider = createFeishuProvider({
-    config,
-    logger: (msg, level) =>
-      logger.log({ level: level || "info", message: msg }),
-  });
-
-  let botUserId = config.botUserId;
-  if (!botUserId && typeof provider.getBotUserId === 'function') {
-    try {
-      const detectedBotUserId = await provider.getBotUserId();
-      if (detectedBotUserId) {
-        botUserId = detectedBotUserId;
-        logger.info(`Auto-detected botUserId: ${botUserId}`);
-      } else {
-        logger.warn('Failed to auto-detect botUserId from API');
-      }
-    } catch (error) {
-      logger.warn(`Auto-detection of botUserId failed: ${error}`);
-    }
-  }
-
-  const opencodeConfig = config.model ? { model: config.model } : undefined;
-
-  provider.onMessage(async (message, extra) => {
-    await handleIncomingMessage(message, {
-      provider,
-      projectDirectory: targetDir,
-      logger: (msg, level) =>
-        logger.log({ level: level || "info", message: msg }),
-      opencodeConfig,
-      streaming: config.streaming,
-      toolOutputFileThreshold: config.toolOutputFileThreshold,
-      requireUserWhitelist: config.requireUserWhitelist,
-      adminUserIds: config.adminUserIds,
-      botUserId: botUserId,
-      adminChatId: config.adminChatId
-        ?? (config.allowedChatIds && config.allowedChatIds.length > 0 ? config.allowedChatIds[0] : undefined),
-      sendApprovalCard: (adminChatId: string, params: { requestId: string; channelId: string; userId: string; userName?: string }) => {
-        const client = provider.getFeishuClient?.();
-        if (!client || typeof client.sendApprovalCard !== 'function') return Promise.resolve(null);
-        return client.sendApprovalCard(adminChatId, params);
-      },
-      sendApprovalCardInThread: (messageId: string, params: { requestId: string; channelId: string; userId: string; userName?: string }) => {
-        const client = provider.getFeishuClient?.();
-        if (!client || typeof client.replyApprovalCardWithId !== 'function') return Promise.resolve(null);
-        return client.replyApprovalCardWithId(messageId, params, { replyInThread: true });
-      },
-      updateApprovalCard: (messageId: string, status: 'approved' | 'rejected', actionBy: string) => {
-        const client = provider.getFeishuClient?.();
-        if (!client || typeof client.updateApprovalCard !== 'function') return Promise.resolve(false);
-        return client.updateApprovalCard(messageId, status, actionBy);
-      },
-      isCardAction: extra?.isCardAction,
-      cardActionData: extra?.cardActionData,
-      questionResponse: extra?.questionResponse,
-      questionNav: extra?.questionNav,
-      permissionResponse: extra?.permissionResponse,
-      workspaceAction: extra?.workspaceAction,
-    });
-  });
-
-  await provider.start();
-  logger.info(t("index.online"));
-
-  setInterval(() => {
-    logger.debug(t("index.heartbeat"));
-  }, 60000);
-
-  let cleaningUp = false;
-  const cleanup = async (signal: string, exitCode = 0) => {
-    if (cleaningUp) return;
-    cleaningUp = true;
-    logger.info(`Signal ${signal}, cleaning up...`);
-    try {
-      await provider.stop();
-      logger.info(t("index.providerStopped"));
-    } catch (e) {
-      logger.error(t("index.providerStopFailed", { error: String(e) }));
-    }
-    try {
-      shutdownOpencodeServers();
-      logger.info("OpenCode servers stopped");
-    } catch (e) {
-      logger.error(t("index.serverStopFailed", { error: String(e) }));
-    }
-    try {
-      lockRelease?.();
-    } catch {
-      // ignore
-    }
-    process.exit(exitCode);
-  };
-
-  process.once("exit", () => {
-    try {
-      lockRelease?.();
-    } catch {
-      // ignore
-    }
-  });
-
-  process.once("uncaughtException", (err) => {
-    logger.error(`Uncaught exception: ${err}`);
-    cleanup("uncaughtException", 1).catch(() => {});
-  });
-
-  process.once("unhandledRejection", (reason) => {
-    logger.error(`Unhandled rejection: ${String(reason)}`);
-    cleanup("unhandledRejection", 1).catch(() => {});
-  });
-
-  process.on("SIGINT", () => cleanup("SIGINT"));
-  process.on("SIGTERM", () => cleanup("SIGTERM"));
 }
 
-function loadFeishuConfig(
-  projectDir: string,
-  logger: Logger,
-): { config: FeishuConfig; path: string } | null {
-  const paths = [
-    join(projectDir, ".amiya", "feishu.json"),
-    join(projectDir, "feishu.json"),
-    resolve(projectDir, "../.amiya/feishu.json"),
-    resolve(projectDir, "../feishu.json"),
-    join(process.cwd(), ".amiya", "feishu.json"),
-    join(process.cwd(), "feishu.json"),
-  ];
+function startIpcWatcher(): void {
+  const ipcBaseDir = path.join(DATA_DIR, 'ipc')
+  fs.mkdirSync(ipcBaseDir, { recursive: true })
 
-  for (const configPath of paths) {
-    if (existsSync(configPath)) {
+  const processIpcFiles = async () => {
+    let groupFolders: string[]
+    try {
+      groupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
+        const stat = fs.statSync(path.join(ipcBaseDir, f))
+        return stat.isDirectory() && f !== 'errors'
+      })
+    } catch (err) {
+      logger.error({ err }, 'Error reading IPC base directory')
+      setTimeout(processIpcFiles, IPC_POLL_INTERVAL)
+      return
+    }
+
+    for (const sourceGroup of groupFolders) {
+      const isMain = sourceGroup === MAIN_GROUP_FOLDER
+      const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages')
+      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks')
+
       try {
-        const content = readFileSync(configPath, "utf-8");
-        const config = JSON.parse(content);
-        if (validateConfig(config)) return { config, path: configPath };
-        logger.error(`Invalid config: ${configPath}`);
-      } catch (error) {
-        logger.error(`Failed to read config ${configPath}: ${error}`);
+        if (fs.existsSync(messagesDir)) {
+          const messageFiles = fs
+            .readdirSync(messagesDir)
+            .filter((f) => f.endsWith('.json'))
+          for (const file of messageFiles) {
+            const filePath = path.join(messagesDir, file)
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+              if (data.type === 'message' && data.chatJid && data.text) {
+                const targetGroup = registeredGroups[data.chatJid]
+                if (
+                  isMain
+                  || (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await sendMessage(
+                    data.chatJid,
+                    `${ASSISTANT_NAME}: ${data.text}`,
+                  )
+                  logger.info(
+                    { chatId: data.chatJid, sourceGroup },
+                    'IPC message sent',
+                  )
+                } else {
+                  logger.warn(
+                    { chatId: data.chatJid, sourceGroup },
+                    'Unauthorized IPC message attempt blocked',
+                  )
+                }
+              }
+              fs.unlinkSync(filePath)
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing IPC message',
+              )
+              const errorDir = path.join(ipcBaseDir, 'errors')
+              fs.mkdirSync(errorDir, { recursive: true })
+              fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`))
+            }
+          }
+        }
+      } catch (err) {
+        logger.error({ err, sourceGroup }, 'Error reading IPC messages')
+      }
+
+      try {
+        if (fs.existsSync(tasksDir)) {
+          const taskFiles = fs
+            .readdirSync(tasksDir)
+            .filter((f) => f.endsWith('.json'))
+          for (const file of taskFiles) {
+            const filePath = path.join(tasksDir, file)
+            try {
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+              await processTaskIpc(data, sourceGroup, isMain)
+              fs.unlinkSync(filePath)
+            } catch (err) {
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing IPC task',
+              )
+              const errorDir = path.join(ipcBaseDir, 'errors')
+              fs.mkdirSync(errorDir, { recursive: true })
+              fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`))
+            }
+          }
+        }
+      } catch (err) {
+        logger.error({ err, sourceGroup }, 'Error reading IPC tasks')
+      }
+    }
+
+    setTimeout(processIpcFiles, IPC_POLL_INTERVAL)
+  }
+
+  processIpcFiles()
+  logger.info('IPC watcher started (per-group namespaces)')
+}
+
+async function processTaskIpc(
+  data: {
+    type: string
+    taskId?: string
+    prompt?: string
+    schedule_type?: string
+    schedule_value?: string
+    context_mode?: string
+    groupFolder?: string
+    chatJid?: string
+    jid?: string
+    name?: string
+    folder?: string
+    trigger?: string
+    containerConfig?: RegisteredGroup['containerConfig']
+  },
+  sourceGroup: string,
+  isMain: boolean,
+): Promise<void> {
+  const cronParserModule = (await import('cron-parser')) as {
+    parseExpression?: (expression: string, options?: { tz?: string }) => {
+      next: () => { toISOString: () => string }
+    }
+    default?: {
+      parseExpression: (expression: string, options?: { tz?: string }) => {
+        next: () => { toISOString: () => string }
       }
     }
   }
+  const cronParser =
+    typeof cronParserModule.parseExpression === 'function'
+      ? cronParserModule
+      : cronParserModule.default
 
-  return null;
+  if (!cronParser || typeof cronParser.parseExpression !== 'function') {
+    throw new Error('cron-parser module does not expose parseExpression')
+  }
+
+  switch (data.type) {
+    case 'schedule_task':
+      if (
+        data.prompt
+        && data.schedule_type
+        && data.schedule_value
+        && data.groupFolder
+      ) {
+        const targetGroup = data.groupFolder
+        if (!isMain && targetGroup !== sourceGroup) {
+          logger.warn(
+            { sourceGroup, targetGroup },
+            'Unauthorized schedule_task attempt blocked',
+          )
+          break
+        }
+
+        const targetJid = Object.entries(registeredGroups).find(
+          ([, group]) => group.folder === targetGroup,
+        )?.[0]
+
+        if (!targetJid) {
+          logger.warn(
+            { targetGroup },
+            'Cannot schedule task: target group not registered',
+          )
+          break
+        }
+
+        const scheduleType = data.schedule_type as 'cron' | 'interval' | 'once'
+        let nextRun: string | null = null
+
+        if (scheduleType === 'cron') {
+          try {
+            const interval = cronParser.parseExpression(data.schedule_value, {
+              tz: TIMEZONE,
+            })
+            nextRun = interval.next().toISOString()
+          } catch {
+            logger.warn(
+              { scheduleValue: data.schedule_value },
+              'Invalid cron expression',
+            )
+            break
+          }
+        } else if (scheduleType === 'interval') {
+          const ms = parseInt(data.schedule_value, 10)
+          if (Number.isNaN(ms) || ms <= 0) {
+            logger.warn(
+              { scheduleValue: data.schedule_value },
+              'Invalid interval',
+            )
+            break
+          }
+          nextRun = new Date(Date.now() + ms).toISOString()
+        } else if (scheduleType === 'once') {
+          const scheduled = new Date(data.schedule_value)
+          if (Number.isNaN(scheduled.getTime())) {
+            logger.warn(
+              { scheduleValue: data.schedule_value },
+              'Invalid timestamp',
+            )
+            break
+          }
+          nextRun = scheduled.toISOString()
+        }
+
+        const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const contextMode =
+          data.context_mode === 'group' || data.context_mode === 'isolated'
+            ? data.context_mode
+            : 'isolated'
+
+        createTask({
+          id: taskId,
+          group_folder: targetGroup,
+          chat_jid: targetJid,
+          prompt: data.prompt,
+          schedule_type: scheduleType,
+          schedule_value: data.schedule_value,
+          context_mode: contextMode,
+          next_run: nextRun,
+          status: 'active',
+          created_at: new Date().toISOString(),
+        })
+        logger.info(
+          { taskId, sourceGroup, targetGroup, contextMode },
+          'Task created via IPC',
+        )
+      }
+      break
+
+    case 'pause_task':
+      if (data.taskId) {
+        const task = getTaskById(data.taskId)
+        if (task && (isMain || task.group_folder === sourceGroup)) {
+          updateTask(data.taskId, { status: 'paused' })
+          logger.info({ taskId: data.taskId, sourceGroup }, 'Task paused via IPC')
+        } else {
+          logger.warn(
+            { taskId: data.taskId, sourceGroup },
+            'Unauthorized task pause attempt',
+          )
+        }
+      }
+      break
+
+    case 'resume_task':
+      if (data.taskId) {
+        const task = getTaskById(data.taskId)
+        if (task && (isMain || task.group_folder === sourceGroup)) {
+          updateTask(data.taskId, { status: 'active' })
+          logger.info({ taskId: data.taskId, sourceGroup }, 'Task resumed via IPC')
+        } else {
+          logger.warn(
+            { taskId: data.taskId, sourceGroup },
+            'Unauthorized task resume attempt',
+          )
+        }
+      }
+      break
+
+    case 'cancel_task':
+      if (data.taskId) {
+        const task = getTaskById(data.taskId)
+        if (task && (isMain || task.group_folder === sourceGroup)) {
+          deleteTask(data.taskId)
+          logger.info({ taskId: data.taskId, sourceGroup }, 'Task cancelled via IPC')
+        } else {
+          logger.warn(
+            { taskId: data.taskId, sourceGroup },
+            'Unauthorized task cancel attempt',
+          )
+        }
+      }
+      break
+
+    case 'refresh_groups':
+      if (isMain) {
+        logger.info(
+          { sourceGroup },
+          'Group metadata refresh requested via IPC',
+        )
+        await syncGroupMetadata(true)
+        const availableGroups = getAvailableGroups()
+        writeGroupsSnapshot(
+          sourceGroup,
+          true,
+          availableGroups,
+          new Set(Object.keys(registeredGroups)),
+        )
+      } else {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized refresh_groups attempt blocked',
+        )
+      }
+      break
+
+    case 'register_group':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized register_group attempt blocked',
+        )
+        break
+      }
+      if (data.jid && data.name && data.folder && data.trigger) {
+        registerGroup(data.jid, {
+          name: data.name,
+          folder: data.folder,
+          trigger: data.trigger,
+          added_at: new Date().toISOString(),
+          containerConfig: data.containerConfig,
+        })
+      } else {
+        logger.warn(
+          { data },
+          'Invalid register_group request - missing required fields',
+        )
+      }
+      break
+
+    default:
+      logger.warn({ type: data.type }, 'Unknown IPC task type')
+  }
 }
 
-function parseStartArgs(argv: string[]) {
-  const args = [...argv];
-  let start = false;
-  let target: string | undefined;
+async function startMessageLoop(): Promise<void> {
+  logger.info(`Amiya running (trigger: @${ASSISTANT_NAME})`)
 
-  const startIndex = args.findIndex((arg) => arg === "--start" || arg.startsWith("--start="));
-  if (startIndex !== -1) {
-    start = true;
-    const arg = args[startIndex];
-    if (arg.startsWith("--start=")) {
-      target = arg.slice("--start=".length) || undefined;
-    } else {
-      const next = args[startIndex + 1];
-      if (next && !next.startsWith("-")) target = next;
+  while (true) {
+    try {
+      const jids = Object.keys(registeredGroups)
+      const { messages } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME)
+
+      if (messages.length > 0) {
+        logger.info({ count: messages.length }, 'New messages')
+      }
+      for (const msg of messages) {
+        try {
+          await processMessage(msg)
+          lastTimestamp = msg.timestamp
+          saveState()
+        } catch (err) {
+          logger.error(
+            { err, msg: msg.id },
+            'Error processing message, will retry',
+          )
+          break
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Error in message loop')
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL))
+  }
+}
+
+function ensureContainerSystemRunning(): void {
+  if (CONTAINER_RUNTIME !== 'container') {
+    logger.info(
+      { runtime: CONTAINER_RUNTIME },
+      'Skipping Apple Container system check',
+    )
+    return
+  }
+  try {
+    execSync('container system status', { stdio: 'pipe' })
+    logger.debug('Apple Container system already running')
+  } catch {
+    logger.info('Starting Apple Container system...')
+    try {
+      execSync('container system start', { stdio: 'pipe', timeout: 30000 })
+      logger.info('Apple Container system started')
+    } catch (err) {
+      logger.error({ err }, 'Failed to start Apple Container system')
+      throw new Error('Apple Container system is required but failed to start')
     }
   }
+}
 
-  const sepIndex = args.indexOf("--");
-  if (sepIndex !== -1) {
-    const next = args[sepIndex + 1];
-    if (next && !next.startsWith("-")) target = next;
+async function connectFeishu(): Promise<void> {
+  if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) {
+    logger.error('FEISHU_APP_ID and FEISHU_APP_SECRET are required')
+    process.exit(1)
   }
 
-  const targetDir =
-    target && target !== "."
-      ? resolve(process.cwd(), target)
-      : process.cwd();
+  feishuClient = createFeishuClient({
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    useLark: FEISHU_USE_LARK,
+    allowedChatIds: FEISHU_ALLOWED_CHAT_IDS,
+  })
 
-  return { start, targetDir };
+  feishuClient.onMessage(async (message) => {
+    const chatId = message.chatId
+    storeChatMetadata(chatId, message.timestamp)
+
+    if (registeredGroups[chatId]) {
+      storeMessage({
+        id: message.messageId,
+        chatJid: chatId,
+        sender: message.senderId,
+        senderName: message.senderName || message.senderId,
+        content: message.text || '',
+        timestamp: message.timestamp,
+      })
+    }
+  })
+
+  feishuClient.start()
+  logger.info('Connected to Feishu')
+
+  syncGroupMetadata().catch((err) =>
+    logger.error({ err }, 'Initial group sync failed'),
+  )
+  setInterval(() => {
+    syncGroupMetadata().catch((err) =>
+      logger.error({ err }, 'Periodic group sync failed'),
+    )
+  }, GROUP_SYNC_INTERVAL_MS)
+
+  startSchedulerLoop({
+    sendMessage,
+    registeredGroups: () => registeredGroups,
+    getSessions: () => sessions,
+  })
+  startIpcWatcher()
+  startMessageLoop()
 }
 
-const { start, targetDir } = parseStartArgs(process.argv.slice(2));
-if (start) {
-  startAmiya(targetDir).catch((err) => {
-    defaultLogger.error(`Bot startup failed: ${err}`);
-    process.exit(1);
-  });
+async function main(): Promise<void> {
+  ensureContainerSystemRunning()
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.mkdirSync(GROUPS_DIR, { recursive: true })
+  initDatabase()
+  logger.info('Database initialized')
+  loadState()
+  ensureMainGroupRegistered()
+  await connectFeishu()
 }
+
+main().catch((err) => {
+  logger.error({ err }, 'Failed to start Amiya')
+  process.exit(1)
+})

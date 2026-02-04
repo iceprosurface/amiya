@@ -1,248 +1,68 @@
-export type ProviderId = 'feishu' | 'slack'
-
-export interface IncomingMessage {
-  providerId: ProviderId
-  messageId: string
-  channelId: string
-  threadId: string
-  userId: string
-  userName?: string
-  text: string
-  mentions?: string[]
-  raw?: unknown
+export interface AdditionalMount {
+  hostPath: string
+  containerPath: string
+  readonly?: boolean
 }
 
-export interface OutgoingMessage {
-  text: string
-  mode?: 'streaming' | 'final'
-  status?: 'info' | 'warning' | 'error'
-  cardId?: string
-  elementId?: string
-  messageParts?: MessagePart[]
+export interface MountAllowlist {
+  allowedRoots: AllowedRoot[]
+  blockedPatterns: string[]
+  nonMainReadOnly: boolean
 }
 
-export type MessagePart = {
-  orderIndex?: number
-  type?: string
-  text?: string
-  reasoning?: string
+export interface AllowedRoot {
+  path: string
+  allowReadWrite: boolean
   description?: string
-  prompt?: string
-  agent?: string
-  tool?: string
-  state?: Record<string, unknown>
-  time?: { start?: number; end?: number }
-  id?: string
-  messageID?: string
 }
 
-export interface OutgoingTarget {
-  channelId: string
-  threadId?: string
+export interface ContainerConfig {
+  additionalMounts?: AdditionalMount[]
+  timeout?: number
+  env?: Record<string, string>
 }
 
-export interface MessageProvider {
-  id: ProviderId
-  start(): Promise<void>
-  stop(): Promise<void>
-  onMessage(
-    handler: (
-      message: IncomingMessage,
-      extra?: {
-        isCardAction: boolean
-        cardActionData?: { action: 'approve' | 'reject'; requestId: string }
-        questionResponse?: { questionId: string; answerLabel: string; questionIndex?: number }
-        questionNav?: { questionId: string; questionIndex?: number; direction: 'next' | 'prev' }
-        permissionResponse?: { requestId: string; reply: 'once' | 'always' | 'reject' }
-        workspaceAction?: {
-          action: 'bind' | 'bind-approve' | 'bind-reject' | 'join-approve' | 'join-reject'
-          workspaceName?: string
-          requestId?: string
-        }
-      },
-    ) => void | Promise<void>,
-  ): void
-  sendMessage(
-    target: OutgoingTarget,
-    message: OutgoingMessage,
-  ): Promise<{ messageId: string; cardId?: string; elementId?: string }>
-  replyMessage?(
-    message: IncomingMessage,
-    messageOut: OutgoingMessage,
-  ): Promise<{ messageId: string; cardId?: string; elementId?: string }>
-  updateMessage?(messageId: string, messageOut: OutgoingMessage): Promise<boolean>
-  addReaction?(messageId: string, emoji: string): Promise<boolean>
-  getFeishuClient?(): FeishuCardClient | null
-  getBotUserId?(): Promise<string | null>
+export interface RegisteredGroup {
+  name: string
+  folder: string
+  trigger: string
+  added_at: string
+  containerConfig?: ContainerConfig
 }
 
-export type FeishuCardClient = {
-  uploadTextFile?: (params: {
-    content: string;
-    fileName: string;
-    fileType?: string;
-    mimeType?: string;
-  }) => Promise<string | null>
-  sendFileMessage?: (
-    chatId: string,
-    fileKey: string,
-  ) => Promise<string | null>
-  replyFileMessageWithId?: (
-    messageId: string,
-    fileKey: string,
-    options?: { replyInThread?: boolean },
-  ) => Promise<string | null>
-  sendApprovalCard?: (
-    adminChatId: string,
-    params: { requestId: string; channelId: string; userId: string; userName?: string },
-  ) => Promise<string | null>
-  replyApprovalCardWithId?: (
-    messageId: string,
-    params: { requestId: string; channelId: string; userId: string; userName?: string },
-    options?: { replyInThread?: boolean },
-  ) => Promise<string | null>
-  updateApprovalCard?: (
-    messageId: string,
-    status: 'approved' | 'rejected',
-    actionBy: string,
-  ) => Promise<boolean>
-  replyWorkspaceBindCardWithId?: (
-    messageId: string,
-    params: { userId: string },
-    options?: { replyInThread?: boolean },
-  ) => Promise<string | null>
-  sendWorkspaceBindApprovalCard?: (
-    adminChatId: string,
-    params: {
-      requestId: string
-      channelId: string
-      workspaceName: string
-      requesterUserId: string
-      requesterUserName?: string
-    },
-  ) => Promise<string | null>
-  updateWorkspaceBindApprovalCard?: (
-    messageId: string,
-    status: 'approved' | 'rejected',
-    actionBy: string,
-  ) => Promise<boolean>
-  replyWorkspaceJoinApprovalCardWithId?: (
-    messageId: string,
-    params: {
-      requestId: string
-      workspaceName: string
-      requesterUserId: string
-      requesterUserName?: string
-      ownerUserId: string
-    },
-    options?: { replyInThread?: boolean },
-  ) => Promise<string | null>
-  updateWorkspaceJoinApprovalCard?: (
-    messageId: string,
-    status: 'approved' | 'rejected',
-    actionBy: string,
-  ) => Promise<boolean>
-  replyPermissionCardWithId?: (
-    messageId: string,
-    params: { requestId: string; permission: string; patterns: string[] },
-    options?: { replyInThread?: boolean },
-  ) => Promise<string | null>
-  replyQuestionCardWithId?: (
-    messageId: string,
-    params: {
-      title: string
-      questionId: string
-      questionText: string
-      options: Array<{ label: string; description?: string }>
-      questionIndex: number
-      totalQuestions: number
-      selectedLabels?: string[]
-      nextLabel?: string
-    },
-    options?: { replyInThread?: boolean },
-  ) => Promise<string | null>
-  updatePermissionCardWithId?: (
-    messageId: string,
-    params: {
-      requestId: string
-      permission: string
-      patterns: string[]
-      status: 'approved' | 'rejected'
-      replyLabel?: string
-    },
-  ) => Promise<boolean>
-  updateQuestionCardWithId?: (
-    messageId: string,
-    params: {
-      title: string
-      questionId: string
-      questionText: string
-      options: Array<{ label: string; description?: string }>
-      questionIndex: number
-      totalQuestions: number
-      selectedLabels?: string[]
-      nextLabel?: string
-      completed?: boolean
-    },
-  ) => Promise<boolean>
-  sendAssistantCardMessageWithId?: (
-    chatId: string,
-    params: {
-      text: string
-      footer?: string
-      title?: string
-      streaming?: boolean
-      status?: 'info' | 'warning' | 'error'
-      messageParts?: MessagePart[]
-    },
-  ) => Promise<{ messageId: string; cardId: string; elementId: string } | null>
-  replyAssistantCardMessageWithId?: (
-    messageId: string,
-    params: {
-      text: string
-      footer?: string
-      title?: string
-      streaming?: boolean
-      status?: 'info' | 'warning' | 'error'
-      messageParts?: MessagePart[]
-    },
-    options?: { replyInThread?: boolean },
-  ) => Promise<{ messageId: string; cardId: string; elementId: string } | null>
-  updateAssistantCardMessageWithId?: (
-    messageId: string,
-    params: {
-      text: string
-      footer?: string
-      title?: string
-      streaming?: boolean
-      status?: 'info' | 'warning' | 'error'
-      messageParts?: MessagePart[]
-    },
-  ) => Promise<boolean>
-  updateAssistantCardElementContentWithId?: (
-    cardId: string,
-    elementId: string,
-    content: string,
-  ) => Promise<boolean>
-  updateAssistantCardConfigWithId?: (
-    cardId: string,
-    params: {
-      sequence: number
-      streaming?: boolean
-      summary?: string
-    },
-  ) => Promise<boolean>
-  updateAssistantCardEntityWithId?: (
-    cardId: string,
-    params: {
-      sequence: number
-      text: string
-      details?: string
-      meta?: string
-      showDetails: boolean
-      showMeta: boolean
-      title?: string
-      status?: 'info' | 'warning' | 'error'
-    },
-  ) => Promise<boolean>
+export interface Session {
+  [folder: string]: string
+}
+
+export interface NewMessage {
+  id: string
+  chat_jid: string
+  sender: string
+  sender_name: string
+  content: string
+  timestamp: string
+}
+
+export interface ScheduledTask {
+  id: string
+  group_folder: string
+  chat_jid: string
+  prompt: string
+  schedule_type: 'cron' | 'interval' | 'once'
+  schedule_value: string
+  context_mode: 'group' | 'isolated'
+  next_run: string | null
+  last_run: string | null
+  last_result: string | null
+  status: 'active' | 'paused' | 'completed'
+  created_at: string
+}
+
+export interface TaskRunLog {
+  task_id: string
+  run_at: string
+  duration_ms: number
+  status: 'success' | 'error'
+  result: string | null
+  error: string | null
 }

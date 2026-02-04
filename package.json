@@ -1,17 +1,15 @@
 {
   "name": "amiya",
   "version": "0.1.0",
-  "description": "飞书控制 opencode 的插件",
+  "description": "Feishu assistant with containerized OpenCode SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --exclude \"./logs/**/*\" --exclude \"./.amiya/**/*\" src/index.ts -- --start",
-    "start": "pnpm build && pm2 start ./pm2.config.cjs",
+    "dev": "tsx watch src/index.ts",
+    "start": "pnpm build && node dist/index.js",
     "build": "tsup",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "restart": "pm2 restart amiya --update-env",
+    "test": "echo \"no tests\"",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -24,23 +22,17 @@
   "license": "MIT",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.42.0",
-    "@opencode-ai/plugin": "latest",
-    "@opencode-ai/sdk": "^1.1.39",
     "better-sqlite3": "^11.8.1",
-    "i18next": "^25.8.0",
-    "pm2": "^6.0.14",
-    "remark-gfm": "^4.0.1",
-    "remark-parse": "^11.0.0",
-    "unified": "^11.0.5",
-    "winston": "^3.19.0"
+    "cron-parser": "^4.9.0",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.1.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.0.0",
-    "vitest": "^2.1.8"
+    "typescript": "^5.0.0"
   },
   "packageManager": "pnpm@10.28.2"
 }

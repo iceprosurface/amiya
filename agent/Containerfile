@@ -1,0 +1,19 @@
+FROM node:20-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl unzip tar \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV HOME="/root"
+RUN /bin/bash -lc "set -euo pipefail; curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path"
+
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+WORKDIR /app
+COPY agent/package.json ./
+RUN npm install --omit=dev
+
+COPY agent/index.js ./index.js
+
+WORKDIR /workspace
+CMD ["node", "/app/index.js"]

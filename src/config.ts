@@ -1,83 +1,134 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import path from 'path'
 
-let dataDir: string | null = null;
-let workspaceBaseDir: string | null = null;
-let workspaceJoinRequiresApproval: boolean | null = null;
+import { loadJson } from './utils.js'
 
-export type RuntimeConfig = {
-  locale?: string;
-  workspaceDir?: string;
-  workspaceJoinRequiresApproval?: boolean;
-};
+interface AmiyaConfig {
+  runtimeDir?: string
+  assistantName?: string
+  pollInterval?: number
+  schedulerPollInterval?: number
+  ipcPollInterval?: number
+  containerRuntime?: string
+  containerImage?: string
+  containerTimeout?: number
+  containerMaxOutputSize?: number
+  feishuAppId?: string
+  feishuAppSecret?: string
+  feishuUseLark?: boolean
+  feishuAllowedChatIds?: string[]
+  feishuMainChatId?: string
+  feishuMainChatName?: string
+  timezone?: string
+}
 
-type RuntimeLogger = (message: string, level?: "debug" | "info" | "warn" | "error") => void;
+const CONFIG_PATH = path.join(process.cwd(), '.amiya', 'config.json')
+const fileConfig = loadJson<AmiyaConfig>(CONFIG_PATH, {})
 
-export function getDataDir(): string {
-  if (!dataDir) {
-    dataDir = path.join(process.cwd(), ".amiya");
+function toInt(value: string | number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return parsed
   }
-  return dataDir;
+  return fallback
 }
 
-export function setDataDir(dir: string): void {
-  const resolved = path.resolve(dir);
-  if (!fs.existsSync(resolved)) {
-    fs.mkdirSync(resolved, { recursive: true });
+function toBool(value: string | boolean | undefined, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    return value === '1' || value.toLowerCase() === 'true'
   }
-  dataDir = resolved;
+  return fallback
 }
 
-function resolveHomePath(input: string): string {
-  if (!input.startsWith("~/")) return input;
-  const home = os.homedir();
-  return home ? path.join(home, input.slice(2)) : input;
-}
-
-export function getWorkspaceBaseDir(): string {
-  if (!workspaceBaseDir) {
-    workspaceBaseDir = path.join(os.homedir(), ".amiya-project");
+function toStringList(
+  value: string | string[] | undefined,
+): string[] {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
   }
-  if (!fs.existsSync(workspaceBaseDir)) {
-    fs.mkdirSync(workspaceBaseDir, { recursive: true });
-  }
-  return workspaceBaseDir;
+  return []
 }
 
-export function setWorkspaceBaseDir(dir: string): void {
-  const resolved = path.resolve(resolveHomePath(dir));
-  if (!fs.existsSync(resolved)) {
-    fs.mkdirSync(resolved, { recursive: true });
-  }
-  workspaceBaseDir = resolved;
+export const ASSISTANT_NAME =
+  process.env.ASSISTANT_NAME || fileConfig.assistantName || 'Andy'
+export const POLL_INTERVAL = toInt(
+  process.env.POLL_INTERVAL || fileConfig.pollInterval,
+  2000,
+)
+export const SCHEDULER_POLL_INTERVAL = toInt(
+  process.env.SCHEDULER_POLL_INTERVAL || fileConfig.schedulerPollInterval,
+  60000,
+)
+export const IPC_POLL_INTERVAL = toInt(
+  process.env.IPC_POLL_INTERVAL || fileConfig.ipcPollInterval,
+  1000,
+)
+
+const PROJECT_ROOT = process.cwd()
+const HOME_DIR = process.env.HOME || '/Users/user'
+const RUNTIME_DIR =
+  process.env.RUNTIME_DIR
+  || fileConfig.runtimeDir
+  || path.join(PROJECT_ROOT, '.amiya', 'runtime')
+
+export const MOUNT_ALLOWLIST_PATH = path.join(
+  HOME_DIR,
+  '.config',
+  'amiya',
+  'mount-allowlist.json',
+)
+export const STORE_DIR = path.resolve(RUNTIME_DIR, 'store')
+export const GROUPS_DIR = path.resolve(RUNTIME_DIR, 'groups')
+export const DATA_DIR = path.resolve(RUNTIME_DIR, 'data')
+export const MAIN_GROUP_FOLDER = 'main'
+
+export const CONTAINER_RUNTIME =
+  process.env.CONTAINER_RUNTIME || fileConfig.containerRuntime || 'container'
+export const CONTAINER_IMAGE =
+  process.env.CONTAINER_IMAGE
+  || fileConfig.containerImage
+  || 'opencode-agent:latest'
+export const CONTAINER_TIMEOUT = toInt(
+  process.env.CONTAINER_TIMEOUT || fileConfig.containerTimeout,
+  300000,
+)
+export const CONTAINER_MAX_OUTPUT_SIZE = toInt(
+  process.env.CONTAINER_MAX_OUTPUT_SIZE || fileConfig.containerMaxOutputSize,
+  10485760,
+)
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function getWorkspaceJoinRequiresApproval(): boolean {
-  return workspaceJoinRequiresApproval ?? true;
-}
+export const TRIGGER_PATTERN = new RegExp(
+  `^@${escapeRegex(ASSISTANT_NAME)}\\b`,
+  'i',
+)
 
-export function setWorkspaceJoinRequiresApproval(value: boolean): void {
-  workspaceJoinRequiresApproval = value;
-}
+export const TIMEZONE =
+  process.env.TZ
+  || fileConfig.timezone
+  || Intl.DateTimeFormat().resolvedOptions().timeZone
 
-export function loadRuntimeConfig(logger?: RuntimeLogger): RuntimeConfig {
-  const configPath = path.join(getDataDir(), "config.json");
-  if (!fs.existsSync(configPath)) return {};
-  try {
-    const content = fs.readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(content);
-    if (!parsed || typeof parsed !== "object") return {};
-    const record = parsed as Record<string, unknown>;
-    const locale = typeof record.locale === "string" ? record.locale : undefined;
-    const workspaceDir = typeof record.workspaceDir === "string" ? record.workspaceDir : undefined;
-    const workspaceJoinRequiresApproval =
-      typeof record.workspaceJoinRequiresApproval === "boolean"
-        ? record.workspaceJoinRequiresApproval
-        : undefined;
-    return { locale, workspaceDir, workspaceJoinRequiresApproval };
-  } catch (error) {
-    logger?.(`Failed to read ${configPath}: ${error}`, "warn");
-    return {};
-  }
-}
+export const FEISHU_APP_ID =
+  process.env.FEISHU_APP_ID || fileConfig.feishuAppId || ''
+export const FEISHU_APP_SECRET =
+  process.env.FEISHU_APP_SECRET || fileConfig.feishuAppSecret || ''
+export const FEISHU_USE_LARK = toBool(
+  process.env.FEISHU_USE_LARK || fileConfig.feishuUseLark,
+  false,
+)
+export const FEISHU_ALLOWED_CHAT_IDS = toStringList(
+  process.env.FEISHU_ALLOWED_CHAT_IDS || fileConfig.feishuAllowedChatIds,
+)
+
+export const FEISHU_MAIN_CHAT_ID =
+  process.env.FEISHU_MAIN_CHAT_ID || fileConfig.feishuMainChatId || ''
+export const FEISHU_MAIN_CHAT_NAME =
+  process.env.FEISHU_MAIN_CHAT_NAME || fileConfig.feishuMainChatName || 'Main'
