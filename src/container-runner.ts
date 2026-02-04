@@ -173,8 +173,12 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   return mounts
 }
 
-function buildContainerArgs(mounts: VolumeMount[]): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName?: string): string[] {
   const args: string[] = ['run', '-i', '--rm']
+
+  if (containerName) {
+    args.push('--name', containerName)
+  }
 
   for (const mount of mounts) {
     if (mount.readonly) {
@@ -200,7 +204,10 @@ export async function runContainerAgent(
   fs.mkdirSync(groupDir, { recursive: true })
 
   const mounts = buildVolumeMounts(group, input.isMain)
-  const containerArgs = buildContainerArgs(mounts)
+  const safeFolder = group.folder.replace(/[^a-zA-Z0-9_.-]/g, '-')
+  const randomSuffix = Math.random().toString(36).slice(2, 8)
+  const containerName = `amiya-${safeFolder}-${Date.now()}-${randomSuffix}`
+  const containerArgs = buildContainerArgs(mounts, containerName)
 
   logger.info(
     {
@@ -222,6 +229,27 @@ export async function runContainerAgent(
     const container = spawn(CONTAINER_RUNTIME, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+
+    let settled = false
+    let didTimeout = false
+
+    const cleanupContainer = (reason: string) => {
+      const cleanup = spawn(CONTAINER_RUNTIME, ['rm', '-f', containerName], {
+        stdio: 'ignore',
+      })
+      cleanup.on('error', (err) => {
+        logger.debug(
+          { container: containerName, error: err, reason },
+          'Failed to cleanup container',
+        )
+      })
+    }
+
+    const safeResolve = (output: ContainerOutput) => {
+      if (settled) return
+      settled = true
+      resolve(output)
+    }
 
     let stdout = ''
     let stderr = ''
@@ -263,8 +291,10 @@ export async function runContainerAgent(
 
     const timeout = setTimeout(() => {
       logger.error({ group: group.name }, 'Container timeout, killing')
+      didTimeout = true
       container.kill('SIGKILL')
-      resolve({
+      cleanupContainer('timeout')
+      safeResolve({
         status: 'error',
         result: null,
         error: `Container timed out after ${CONTAINER_TIMEOUT}ms`,
@@ -285,6 +315,7 @@ export async function runContainerAgent(
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
         `IsMain: ${input.isMain}`,
+        `Container Name: ${containerName}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
         `Stdout Truncated: ${stdoutTruncated}`,
@@ -339,6 +370,12 @@ export async function runContainerAgent(
       fs.writeFileSync(logFile, logLines.join('\n'))
       logger.debug({ logFile, verbose: isVerbose }, 'Container log written')
 
+      cleanupContainer('close')
+
+      if (didTimeout) {
+        return
+      }
+
       if (code !== 0) {
         logger.error(
           {
@@ -351,7 +388,7 @@ export async function runContainerAgent(
           'Container exited with error',
         )
 
-        resolve({
+        safeResolve({
           status: 'error',
           result: null,
           error: `Container exited with code ${code}: ${stderr.slice(-200)}`,
@@ -385,7 +422,7 @@ export async function runContainerAgent(
           'Container completed',
         )
 
-        resolve(output)
+        safeResolve(output)
       } catch (err) {
         logger.error(
           {
@@ -396,7 +433,7 @@ export async function runContainerAgent(
           'Failed to parse container output',
         )
 
-        resolve({
+        safeResolve({
           status: 'error',
           result: null,
           error:
@@ -408,7 +445,8 @@ export async function runContainerAgent(
     container.on('error', (err) => {
       clearTimeout(timeout)
       logger.error({ group: group.name, error: err }, 'Container spawn error')
-      resolve({
+      cleanupContainer('spawn-error')
+      safeResolve({
         status: 'error',
         result: null,
         error: `Container spawn error: ${err.message}`,
