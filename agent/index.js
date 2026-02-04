@@ -286,7 +286,13 @@ async function run() {
     ensureCompactionPlugin(workDir)
     const { client, server } = await createOpencode({
       config: {
-        permission: "allow",
+        permission: {
+          edit: 'allow',
+          bash: 'allow',
+          webfetch: 'allow',
+          external_directory: 'allow',
+          "*": "allow",
+        },
       },
     })
 
