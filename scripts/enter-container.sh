@@ -11,13 +11,12 @@ if [[ ! -d "${repo_root}/.amiya" ]]; then
   exit 1
 fi
 
-data_dir="${repo_root}/.amiya/workspace/data"
 group_dir="${repo_root}/.amiya/workspace/groups/${group}"
-sessions_dir="${data_dir}/sessions/${group}/.opencode"
-ipc_dir="${data_dir}/ipc/${group}"
+sessions_dir="${group_dir}/opencode/session/.opencode"
+ipc_dir="${group_dir}/ipc"
 opencode_global="${repo_root}/.amiya/opencode-global"
 opencode_share="${repo_root}/.amiya/opencode-share"
-opencode_log="${data_dir}/opencode-log/${group}"
+opencode_log="${group_dir}/opencode/log"
 
 mkdir -p "${group_dir}" "${sessions_dir}" "${ipc_dir}" "${opencode_log}"
 

@@ -411,26 +411,24 @@ async function sendMessage(chatId: string, text: string): Promise<void> {
 }
 
 function startIpcWatcher(): void {
-  const ipcBaseDir = path.join(DATA_DIR, 'ipc')
-  fs.mkdirSync(ipcBaseDir, { recursive: true })
-
   const processIpcFiles = async () => {
     let groupFolders: string[]
     try {
-      groupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
-        const stat = fs.statSync(path.join(ipcBaseDir, f))
-        return stat.isDirectory() && f !== 'errors'
+      groupFolders = fs.readdirSync(GROUPS_DIR).filter((f) => {
+        const stat = fs.statSync(path.join(GROUPS_DIR, f))
+        return stat.isDirectory() && f !== 'global'
       })
     } catch (err) {
-      logger.error({ err }, 'Error reading IPC base directory')
+      logger.error({ err }, 'Error reading groups directory for IPC')
       setTimeout(processIpcFiles, IPC_POLL_INTERVAL)
       return
     }
 
     for (const sourceGroup of groupFolders) {
       const isMain = sourceGroup === MAIN_GROUP_FOLDER
-      const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages')
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks')
+      const ipcDir = path.join(GROUPS_DIR, sourceGroup, 'ipc')
+      const messagesDir = path.join(ipcDir, 'messages')
+      const tasksDir = path.join(ipcDir, 'tasks')
 
       try {
         if (fs.existsSync(messagesDir)) {
@@ -460,15 +458,15 @@ function startIpcWatcher(): void {
                 }
               }
               fs.unlinkSync(filePath)
-            } catch (err) {
-              logger.error(
-                { file, sourceGroup, err },
-                'Error processing IPC message',
-              )
-              const errorDir = path.join(ipcBaseDir, 'errors')
-              fs.mkdirSync(errorDir, { recursive: true })
-              fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`))
-            }
+              } catch (err) {
+                logger.error(
+                  { file, sourceGroup, err },
+                  'Error processing IPC message',
+                )
+                const errorDir = path.join(ipcDir, 'errors')
+                fs.mkdirSync(errorDir, { recursive: true })
+                fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`))
+              }
           }
         }
       } catch (err) {
@@ -491,7 +489,7 @@ function startIpcWatcher(): void {
                 { file, sourceGroup, err },
                 'Error processing IPC task',
               )
-              const errorDir = path.join(ipcBaseDir, 'errors')
+              const errorDir = path.join(ipcDir, 'errors')
               fs.mkdirSync(errorDir, { recursive: true })
               fs.renameSync(filePath, path.join(errorDir, `${sourceGroup}-${file}`))
             }

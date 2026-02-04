@@ -71,7 +71,8 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
     }
   }
 
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', group.folder)
+  const groupDir = path.join(GROUPS_DIR, group.folder)
+  const groupIpcDir = path.join(groupDir, 'ipc')
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true })
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true })
   mounts.push({
@@ -146,11 +147,7 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
     })
   }
 
-  const opencodeLogDir = path.join(
-    DATA_DIR,
-    'opencode-log',
-    group.folder,
-  )
+  const opencodeLogDir = path.join(groupDir, 'opencode', 'log')
   fs.mkdirSync(opencodeLogDir, { recursive: true })
   mounts.push({
     hostPath: opencodeLogDir,
@@ -158,11 +155,7 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
     readonly: false,
   })
 
-  const opencodeStorageDir = path.join(
-    DATA_DIR,
-    'opencode-storage',
-    group.folder,
-  )
+  const opencodeStorageDir = path.join(groupDir, 'opencode', 'storage')
   fs.mkdirSync(opencodeStorageDir, { recursive: true })
   mounts.push({
     hostPath: opencodeStorageDir,
@@ -262,6 +255,14 @@ export async function runContainerAgent(
     container.stdout.on('data', (data) => {
       if (stdoutTruncated) return
       const chunk = data.toString()
+      logger.debug(
+        {
+          group: group.name,
+          chunkBytes: Buffer.byteLength(chunk, 'utf-8'),
+          totalBytes: Buffer.byteLength(stdout, 'utf-8'),
+        },
+        'Container stdout chunk received',
+      )
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length
       if (chunk.length > remaining) {
         stdout += chunk.slice(0, remaining)
@@ -278,6 +279,14 @@ export async function runContainerAgent(
       for (const line of lines) {
         if (line) logger.debug({ container: group.folder }, line)
       }
+      logger.debug(
+        {
+          group: group.name,
+          chunkBytes: Buffer.byteLength(chunk, 'utf-8'),
+          totalBytes: Buffer.byteLength(stderr, 'utf-8'),
+        },
+        'Container stderr chunk received',
+      )
       if (stderrTruncated) return
       const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length
       if (chunk.length > remaining) {
@@ -368,7 +377,15 @@ export async function runContainerAgent(
       }
 
       fs.writeFileSync(logFile, logLines.join('\n'))
-      logger.debug({ logFile, verbose: isVerbose }, 'Container log written')
+      logger.debug(
+        {
+          logFile,
+          verbose: isVerbose,
+          stdoutBytes: Buffer.byteLength(stdout, 'utf-8'),
+          stderrBytes: Buffer.byteLength(stderr, 'utf-8'),
+        },
+        'Container log written',
+      )
 
       cleanupContainer('close')
 
@@ -424,10 +441,15 @@ export async function runContainerAgent(
 
         safeResolve(output)
       } catch (err) {
+        const stdoutPreview = stdout.slice(-2000)
+        const stderrPreview = stderr.slice(-2000)
         logger.error(
           {
             group: group.name,
-            stdout: stdout.slice(-500),
+            stdout: stdoutPreview,
+            stderr: stderrPreview,
+            stdoutLength: stdout.length,
+            stderrLength: stderr.length,
             error: err,
           },
           'Failed to parse container output',
@@ -468,7 +490,7 @@ export function writeTasksSnapshot(
     next_run: string | null
   }>,
 ): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder)
+  const groupIpcDir = path.join(GROUPS_DIR, groupFolder, 'ipc')
   fs.mkdirSync(groupIpcDir, { recursive: true })
 
   const filteredTasks = isMain
@@ -492,7 +514,7 @@ export function writeGroupsSnapshot(
   groups: AvailableGroup[],
   registeredJids: Set<string>,
 ): void {
-  const groupIpcDir = path.join(DATA_DIR, 'ipc', groupFolder)
+  const groupIpcDir = path.join(GROUPS_DIR, groupFolder, 'ipc')
   fs.mkdirSync(groupIpcDir, { recursive: true })
 
   const visibleGroups = isMain ? groups : []

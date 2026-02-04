@@ -23,33 +23,30 @@ function log(message, data) {
   process.stderr.write(`${line}\n`)
 }
 
-function ensureOpencodePath() {
-  const candidates = [
-    '/root/.opencode/bin/opencode',
-    '/home/node/.opencode/bin/opencode',
-  ]
-  let found = false
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      const dir = path.dirname(candidate)
-      if (!process.env.PATH?.includes(dir)) {
-        process.env.PATH = `${dir}:${process.env.PATH || ''}`
-      }
-      found = true
-      break
-    }
-  }
-  if (!found) {
-    log('opencode binary not found', {
-      candidates,
-      path: process.env.PATH || '',
-    })
-  }
-}
-
 function outputResult(payload) {
   const json = JSON.stringify(payload)
   process.stdout.write(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`)
+}
+
+async function closeServer(server, timeoutMs = 200) {
+  if (!server || typeof server.close !== 'function') return
+  try {
+    await Promise.race([
+      new Promise((resolve) => {
+        const result = server.close(() => resolve(null))
+        if (result && typeof result.then === 'function') {
+          result.then(resolve).catch(resolve)
+        }
+      }),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ])
+  } catch {
+  }
+}
+
+async function finalizeAndExit(server) {
+  setTimeout(() => process.exit(0), 50)
+  await closeServer(server)
 }
 
 function readStdin() {
@@ -278,7 +275,6 @@ async function run() {
     }
 
     loadEnvFile('/workspace/env-dir/env')
-    ensureOpencodePath()
     ensureOpencodeAuth()
     ensureOpencodeConfig()
 
@@ -287,11 +283,11 @@ async function run() {
     const { client, server } = await createOpencode({
       config: {
         permission: {
+          "*": "allow",
           edit: 'allow',
           bash: 'allow',
           webfetch: 'allow',
           external_directory: 'allow',
-          "*": "allow",
         },
       },
     })
@@ -335,11 +331,13 @@ async function run() {
         result: null,
         error: 'Failed to create session',
       })
+      log('Session create failed: no sessionId')
       if (server) server.close()
       return
     }
 
     const system = resolveSystemPrompt()
+    log('Sending prompt to opencode', { sessionId, workDir })
     const response = await client.session.prompt({
       path: { id: sessionId },
       query: { directory: workDir },
@@ -353,10 +351,19 @@ async function run() {
         ],
       },
     })
+    log('Prompt response received', {
+      sessionId,
+      hasParts: Array.isArray(response?.data?.parts),
+    })
 
     const resultText = extractText(response?.data?.parts)
     let result = resultText || '[no text response]'
+    log('Extracted response text', {
+      sessionId,
+      textLength: resultText ? resultText.length : 0,
+    })
 
+    log('Fetching usage info', { sessionId })
     const usage = await withTimeout(
       getLatestAssistantUsage(client, sessionId, workDir),
       1500,
@@ -399,12 +406,16 @@ async function run() {
       result,
       newSessionId: sessionId,
     })
-
-    if (server) server.close()
+    log('Output result sent', { sessionId, resultLength: result.length })
+    await finalizeAndExit(server)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    log('Agent error', { message })
+    log('Agent error', {
+      message,
+      stack: err instanceof Error ? err.stack : undefined,
+    })
     outputResult({ status: 'error', result: null, error: message })
+    await finalizeAndExit(server)
   }
 }
 

@@ -95,7 +95,7 @@ export const CONTAINER_IMAGE =
   || 'opencode-agent:latest'
 export const CONTAINER_TIMEOUT = toInt(
   process.env.CONTAINER_TIMEOUT || fileConfig.containerTimeout,
-  300000,
+  30000,
 )
 export const CONTAINER_MAX_OUTPUT_SIZE = toInt(
   process.env.CONTAINER_MAX_OUTPUT_SIZE || fileConfig.containerMaxOutputSize,
