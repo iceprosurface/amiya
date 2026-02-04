@@ -1,14 +1,19 @@
+const path = require('path')
+
+const targetDir = process.env.AMIYA_TARGET_DIR || __dirname
+
 module.exports = {
   apps: [
     {
       name: "amiya",
-      script: "dist/index.js",
-      cwd: __dirname,
+      script: path.join(__dirname, "dist/index.js"),
+      cwd: targetDir,
       instances: 1,
       autorestart: true,
       watch: false,
       env: {
         NODE_ENV: "production",
+        AMIYA_TARGET_DIR: targetDir,
         http_proxy: "",
         https_proxy: "",
         all_proxy: "",

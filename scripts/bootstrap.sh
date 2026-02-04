@@ -177,53 +177,66 @@ ensure_target_dir() {
   TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 }
 
+ensure_mount_allowlist() {
+  local allowlist_dir="$HOME/.config/amiya"
+  local allowlist_path="$allowlist_dir/mount-allowlist.json"
+  if [[ -f "$allowlist_path" ]]; then
+    return 0
+  fi
+  mkdir -p "$allowlist_dir"
+  cat > "$allowlist_path" <<EOF
+{
+  "allowedRoots": [
+    {
+      "path": "$TARGET_DIR",
+      "allowReadWrite": true,
+      "description": "Amiya target project"
+    }
+  ],
+  "blockedPatterns": [
+    "password",
+    "secret",
+    "token"
+  ],
+  "nonMainReadOnly": true
+}
+EOF
+  print "Generated mount allowlist at: $allowlist_path"
+}
+
 generate_config() {
   local data_dir="$TARGET_DIR/.amiya"
-  local config_path="$data_dir/feishu.json"
+  local config_path="$data_dir/config.json"
   local source_path="$data_dir/source.md"
 
   mkdir -p "$data_dir"
 
-  prompt PROVIDER "Provider (feishu only for now)" "feishu"
-  if [[ "$PROVIDER" != "feishu" ]]; then
-    fail "Provider '$PROVIDER' is not supported yet. Use 'feishu'."
-  fi
-
   if [[ -f "$config_path" ]]; then
-    print "feishu.json already exists: $config_path"
+    print "config.json already exists: $config_path"
   else
-    print "Generating feishu.json..."
+    print "Generating config.json..."
     prompt FEISHU_APP_ID "Feishu appId"
     prompt FEISHU_APP_SECRET "Feishu appSecret"
-    prompt FEISHU_BOT_USER_ID "Feishu botUserId (optional)"
-    prompt FEISHU_ADMIN_CHAT_ID "Feishu adminChatId (optional)"
-    prompt FEISHU_ADMIN_USER_IDS "Feishu adminUserIds (comma-separated, optional)"
+    prompt FEISHU_MAIN_CHAT_ID "Feishu mainChatId"
+    prompt FEISHU_MAIN_CHAT_NAME "Feishu mainChatName" "Main"
     prompt FEISHU_ALLOWED_CHAT_IDS "Feishu allowedChatIds (comma-separated, optional)"
-    prompt FEISHU_REQUIRE_USER_WHITELIST "requireUserWhitelist (true/false)" "false"
     prompt FEISHU_USE_LARK "useLark (true/false)" "false"
-    prompt FEISHU_DEBUG "debug (true/false)" "true"
-    prompt FEISHU_MODEL "default model (provider/model, optional)"
 
     [[ -n "$FEISHU_APP_ID" ]] || fail "Feishu appId is required."
     [[ -n "$FEISHU_APP_SECRET" ]] || fail "Feishu appSecret is required."
+    [[ -n "$FEISHU_MAIN_CHAT_ID" ]] || fail "Feishu mainChatId is required."
 
-    local admin_users_json
-    admin_users_json="$(split_csv "$FEISHU_ADMIN_USER_IDS")"
     local allowed_chats_json
     allowed_chats_json="$(split_csv "$FEISHU_ALLOWED_CHAT_IDS")"
 
     cat > "$config_path" <<EOF
 {
-  "appId": "$FEISHU_APP_ID",
-  "appSecret": "$FEISHU_APP_SECRET",
-  "useLark": $(is_truthy "$FEISHU_USE_LARK" && echo true || echo false),
-  "adminUserIds": $admin_users_json,
-  "adminChatId": "$FEISHU_ADMIN_CHAT_ID",
-  "botUserId": "$FEISHU_BOT_USER_ID",
-  "allowedChatIds": $allowed_chats_json,
-  "requireUserWhitelist": $(is_truthy "$FEISHU_REQUIRE_USER_WHITELIST" && echo true || echo false),
-  "debug": $(is_truthy "$FEISHU_DEBUG" && echo true || echo false),
-  "model": "$FEISHU_MODEL"
+  "feishuAppId": "$FEISHU_APP_ID",
+  "feishuAppSecret": "$FEISHU_APP_SECRET",
+  "feishuUseLark": $(is_truthy "$FEISHU_USE_LARK" && echo true || echo false),
+  "feishuMainChatId": "$FEISHU_MAIN_CHAT_ID",
+  "feishuMainChatName": "$FEISHU_MAIN_CHAT_NAME",
+  "feishuAllowedChatIds": $allowed_chats_json
 }
 EOF
   fi
@@ -261,6 +274,7 @@ main() {
   ensure_pm2
   ensure_opencode
   opencode_login
+  ensure_mount_allowlist
   generate_config
   start_pm2
   print "Bootstrap complete."
